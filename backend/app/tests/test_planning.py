@@ -1,4 +1,4 @@
- """
+"""
 Testy kontraktowe pipeline'u: POIService -> ConnectionService -> Encoder
 -> Solver -> Decoder -> Mapper.
 
@@ -17,21 +17,36 @@ from __future__ import annotations
 import json
 import math
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 # =========================================================================== #
-# ADAPTER  -- jedyne miejsce, które trzeba dopasować do Waszych modeli
+# ADAPTER  -- modele i implementacje domenowe używane przez testy
 # =========================================================================== #
 
-# TODO: zamień na prawdziwe importy, np.
-# from app.domain.models import POI, Coordinates, POIConnection, TravelMode, \
-#     PlanningConstraints, SolverInput, SolverResult, Plan, PlotterPayload
-# from app.services import ...
-
-
-def _wire(name: str):
-    pytest.skip(f"Podepnij implementację: {name} (sekcja ADAPTER)")
+from service.planning_json_poi_service import JsonPOIService
+from service.planning_mapper import SimplePlanningMapper
+from service.planning_or_solver import OrToolsSolver
+from service.planning_simple_connection_service import SimpleConnectionService
+from service.planning_simple_solver_decoder import SimpleSolverDecoder
+from service.planning_simple_solver_encoder import SimpleSolverEncoder
+from schemas.planning import (
+    Coordinates,
+    CostWeights,
+    CostVector,
+    OptionalCostVector,
+    Plan,
+    PlanningConstraints,
+    PlotterPayload,
+    POI,
+    POIConnection,
+    SolverEdge,
+    SolverInput,
+    SolverNode,
+    SolverResult,
+    TravelMode,
+)
 
 
 # ---- fixture'y implementacji ---------------------------------------------- #
@@ -39,33 +54,37 @@ def _wire(name: str):
 # żeby testy nie szły do sieci.
 
 @pytest.fixture
-def poi_service():          # IPOIService
-    return _wire("IPOIService")
+def poi_service():
+    return JsonPOIService(
+        Path(__file__).parents[2]
+        / "resources"
+        / "dataset_crawler-google-places_2026-10-03_15-34-29-547.json"
+    )
 
 
 @pytest.fixture
-def connection_service():   # IPOIConnectionService
-    return _wire("IPOIConnectionService")
+def connection_service():
+    return SimpleConnectionService()
 
 
 @pytest.fixture
-def encoder():              # ISolverEncoder
-    return _wire("ISolverEncoder")
+def encoder():
+    return SimpleSolverEncoder()
 
 
 @pytest.fixture
-def solver():               # ISolver
-    return _wire("ISolver")
+def solver():
+    return OrToolsSolver(time_limit_s=5)
 
 
 @pytest.fixture
-def decoder():              # ISolverDecoder
-    return _wire("ISolverDecoder")
+def decoder():
+    return SimpleSolverDecoder()
 
 
 @pytest.fixture
-def mapper():               # IPlanningMapper
-    return _wire("IPlanningMapper")
+def mapper():
+    return SimplePlanningMapper()
 
 
 # ---- fabryki modeli -------------------------------------------------------- #
@@ -74,84 +93,190 @@ KRAKOW = (50.0617, 19.9373)  # Rynek Główny (lat, lon)
 DAY = datetime(2026, 10, 3)  # sobota
 
 
-def make_coords(lat: float, lon: float):
-    raise NotImplementedError
+def make_coords(lat: float, lon: float) -> Coordinates:
+    return Coordinates(lat=lat, lng=lon)
 
 
 def make_poi(id: str, lat: float, lon: float, category: str = "museum",
-             price: float = 0.0, visit_min: int = 60, reward: float = 1.0):
-    raise NotImplementedError
+             price: float = 0.0, visit_min: int = 60,
+             reward: float = 1.0) -> POI:
+    return POI(
+        id=id,
+        name=id,
+        location=make_coords(lat, lon),
+        types=[category],
+        reward=reward,
+        visit_cost=CostVector(
+            time_s=visit_min * 60,
+            money_minor=round(price * 100),
+        ),
+    )
 
 
 def make_connection(a_id: str, b_id: str, mode, minutes: float,
-                    cost: float = 0.0, meters: float = 0.0):
-    raise NotImplementedError
+                    cost: float = 0.0,
+                    meters: float = 0.0) -> POIConnection:
+    return POIConnection(
+        from_poi_id=a_id,
+        to_poi_id=b_id,
+        mode=mode,
+        duration=timedelta(minutes=minutes),
+        fuel_cost=cost,
+        distance_m=round(meters),
+    )
 
 
 def walking():
-    """Zwróć TravelMode.WALKING."""
-    raise NotImplementedError
+    return TravelMode.WALK
 
 
 def transit():
-    """Zwróć TravelMode.PUBLIC_TRANSPORT."""
-    raise NotImplementedError
+    return TravelMode.TRANSIT
 
 
 def make_constraints(budget: float = 150.0, start=KRAKOW,
                      start_at=DAY.replace(hour=10), end_at=DAY.replace(hour=17),
-                     **extra):
-    raise NotImplementedError
+                     **extra) -> PlanningConstraints:
+    return PlanningConstraints(
+        start_poi_id=extra.get("start_poi_id"),
+        end_poi_id=extra.get("end_poi_id"),
+        days=extra.get("days", 1),
+        travel_mode=extra.get("travel_mode", walking()),
+        budget_per_route=OptionalCostVector(
+            time_s=int((end_at - start_at).total_seconds()),
+            money_minor=round(budget * 100),
+        ),
+        weights=CostWeights(),
+        max_pois=extra.get("max_pois"),
+        must_visit_ids=extra.get("must_visit_ids", []),
+        day_start=start_at.time(),
+        plan_date=start_at,
+    )
 
 
 def make_solver_input(rewards: dict, visit_costs: dict, edges: dict,
-                      budget: float, start: str):
+                      budget: float, start: str) -> SolverInput:
     """Ręcznie zbuduj SolverInput.
     rewards: {node: reward}, visit_costs: {node: koszt wizyty},
     edges: {(a, b): koszt przejścia}, start: id węzła startowego."""
-    raise NotImplementedError
+    node_ids = list(rewards)
+    index_of = {node_id: index for index, node_id in enumerate(node_ids)}
+    nodes = [
+        SolverNode(
+            index=index_of[node_id],
+            poi_id=node_id,
+            reward=float(rewards[node_id]),
+            visit_cost=CostVector(time_s=round(visit_costs[node_id] * 100)),
+        )
+        for node_id in node_ids
+    ]
+    solver_edges = [
+        SolverEdge(
+            source=index_of[a],
+            target=index_of[b],
+            cost=CostVector(time_s=round(cost * 100)),
+        )
+        for (a, b), cost in edges.items()
+    ]
+    return SolverInput(
+        nodes=nodes,
+        edges=solver_edges,
+        num_routes=1,
+        start_index=index_of[start],
+        budget_per_route=OptionalCostVector(time_s=round(budget * 100)),
+        weights=CostWeights(),
+    )
 
 
 # ---- akcesory (jak czytać pola z modeli) ---------------------------------- #
 
-def poi_id(p) -> str: raise NotImplementedError
-def poi_latlon(p) -> tuple[float, float]: raise NotImplementedError
+def poi_id(p) -> str:
+    return p.id
 
-def conn_ends(c) -> tuple[str, str]: raise NotImplementedError
+
+def poi_latlon(p) -> tuple[float, float]:
+    return p.location.lat, p.location.lng
+
+def conn_ends(c) -> tuple[str, str]:
+    return c.from_poi_id, c.to_poi_id
+
+
 def conn_metrics(c) -> tuple[float, float, float]:
     """(minuty, koszt_pln, metry)"""
-    raise NotImplementedError
-def conn_mode(c): raise NotImplementedError
+    return c.duration.total_seconds() / 60, c.fuel_cost, c.distance_m
 
-def si_nodes(si) -> list: raise NotImplementedError          # lista węzłów
-def si_node_id(n) -> str: raise NotImplementedError
-def si_node_reward(n) -> float: raise NotImplementedError
-def si_node_visit_cost(n) -> float: raise NotImplementedError
-def si_edges(si) -> list: raise NotImplementedError          # lista krawędzi
-def si_edge_ends(e) -> tuple[str, str]: raise NotImplementedError
+
+def conn_mode(c):
+    return c.mode
+
+
+def si_nodes(si) -> list:
+    return si.nodes
+
+
+def si_node_id(n) -> str:
+    return n.poi_id
+
+
+def si_node_reward(n) -> float:
+    return n.reward
+
+
+def si_node_visit_cost(n) -> float:
+    return n.visit_cost.time_s / 100
+
+
+def si_edges(si) -> list:
+    return si.edges
+
+
+def si_edge_ends(si, e) -> tuple[str, str]:
+    return si.nodes[e.source].poi_id, si.nodes[e.target].poi_id
+
+
 def si_edge_cost(e) -> float:
     """Skalar kosztu (np. budżet) lub pierwsza składowa CostVector."""
-    raise NotImplementedError
+    return e.cost.time_s / 100
 
-def result_route(r) -> list[str]:
+
+def result_route(r: SolverResult, si: SolverInput) -> list[str]:
     """Uporządkowane id węzłów w rozwiązaniu (z startem, jeśli go zawiera)."""
-    raise NotImplementedError
-def result_total_reward(r) -> float: raise NotImplementedError
+    if not r.routes:
+        return []
+    return [si.nodes[index].poi_id for index in r.routes[0].node_path]
 
-def plan_stops(plan) -> list[tuple[str, datetime, datetime]]:
+
+def result_total_reward(r: SolverResult) -> float:
+    return sum(route.reward for route in r.routes)
+
+def plan_stops(plan: Plan) -> list[tuple[str, datetime, datetime]]:
     """[(poi_id, przyjście, wyjście)] w kolejności odwiedzin."""
-    raise NotImplementedError
-def plan_total_cost(plan) -> float: raise NotImplementedError
+    return [
+        (stop.poi.id, stop.arrival, stop.departure)
+        for day in plan.days
+        for stop in day.stops
+    ]
 
-def payload_markers(payload) -> list[str]:
+
+def plan_total_cost(plan: Plan) -> float:
+    return plan.total_cost.money_minor / 100
+
+def payload_markers(payload: PlotterPayload) -> list[str]:
     """Id/nazwy markerów w kolejności."""
-    raise NotImplementedError
-def payload_path(payload) -> list[tuple[float, float]]:
+    return [point.poi_id for point in payload.points]
+
+
+def payload_path(payload: PlotterPayload) -> list[tuple[float, float]]:
     """Punkty linii trasy (lat, lon) w kolejności."""
-    raise NotImplementedError
-def payload_to_json(payload) -> str:
+    return [
+        (point.location.lat, point.location.lng)
+        for point in payload.points
+    ]
+
+
+def payload_to_json(payload: PlotterPayload) -> str:
     """Serializacja tak, jak robi to API (np. model_dump_json / json.dumps)."""
-    raise NotImplementedError
+    return payload.model_dump_json()
 
 
 # =========================================================================== #
@@ -310,7 +435,7 @@ def test_encoder_edges_only_between_known_nodes(encoder):
     si = encoder.encode(pois, full_connections(pois), make_constraints())
     node_ids = {si_node_id(n) for n in si_nodes(si)}
     for e in si_edges(si):
-        a, b = si_edge_ends(e)
+        a, b = si_edge_ends(si, e)
         assert a in node_ids and b in node_ids
 
 
@@ -318,7 +443,9 @@ def test_encoder_does_not_invent_edges(encoder):
     pois = sample_pois()
     conns = [c for c in full_connections(pois) if conn_ends(c) != ("rynek", "wawel")]
     si = encoder.encode(pois, conns, make_constraints())
-    assert ("rynek", "wawel") not in {si_edge_ends(e) for e in si_edges(si)}
+    assert ("rynek", "wawel") not in {
+        si_edge_ends(si, e) for e in si_edges(si)
+    }
 
 
 def test_encoder_rewards_and_costs_are_non_negative(encoder):
@@ -344,7 +471,9 @@ def test_encoder_is_deterministic(encoder):
     c = make_constraints()
     a, b = encoder.encode(pois, conns, c), encoder.encode(pois, conns, c)
     assert [si_node_id(n) for n in si_nodes(a)] == [si_node_id(n) for n in si_nodes(b)]
-    assert [si_edge_ends(e) for e in si_edges(a)] == [si_edge_ends(e) for e in si_edges(b)]
+    assert [si_edge_ends(a, e) for e in si_edges(a)] == [
+        si_edge_ends(b, e) for e in si_edges(b)
+    ]
 
 
 def test_encoder_empty_input_does_not_crash(encoder):
@@ -356,8 +485,8 @@ def test_encoder_empty_input_does_not_crash(encoder):
 # 4. ISolver  (na ręcznie policzonych instancjach)
 # =========================================================================== #
 
-def _feasible(result, rewards, visit_costs, edges, budget):
-    route = result_route(result)
+def _feasible(result, solver_input, rewards, visit_costs, edges, budget):
+    route = result_route(result, solver_input)
     assert len(route) == len(set(route)), "duplikaty w trasie"
     spent = sum(visit_costs[n] for n in route)
     spent += sum(edges[(a, b)] for a, b in zip(route, route[1:]))
@@ -372,8 +501,8 @@ def test_solver_picks_optimal_subset_under_budget(solver):
     edges = {(a, b): 0 for a in rewards for b in rewards if a != b}
     si = make_solver_input(rewards, visit, edges, budget=10, start="s")
     res = solver.solve(si)
-    _feasible(res, rewards, visit, edges, 10)
-    assert set(result_route(res)) - {"s"} == {"B", "C"}
+    _feasible(res, si, rewards, visit, edges, 10)
+    assert set(result_route(res, si)) - {"s"} == {"B", "C"}
     assert result_total_reward(res) == pytest.approx(8)
 
 
@@ -386,18 +515,19 @@ def test_solver_accounts_for_travel_cost(solver):
              ("X", "s"): 9, ("Y", "s"): 1}
     si = make_solver_input(rewards, visit, edges, budget=10, start="s")
     res = solver.solve(si)
-    _feasible(res, rewards, visit, edges, 10)
+    _feasible(res, si, rewards, visit, edges, 10)
     # X nieosiągalne (9+2=11 > 10); jedyna sensowna trasa to s->Y
-    assert result_route(res)[-1] == "Y"
-    assert "X" not in result_route(res)
+    assert result_route(res, si)[-1] == "Y"
+    assert "X" not in result_route(res, si)
 
 
 def test_solver_route_starts_at_start_node(solver):
     rewards = {"s": 0, "A": 2, "B": 2}
     visit = {"s": 0, "A": 1, "B": 1}
     edges = {(a, b): 1 for a in rewards for b in rewards if a != b}
-    res = solver.solve(make_solver_input(rewards, visit, edges, budget=10, start="s"))
-    assert result_route(res)[0] == "s"
+    si = make_solver_input(rewards, visit, edges, budget=10, start="s")
+    res = solver.solve(si)
+    assert result_route(res, si)[0] == "s"
 
 
 def test_solver_infeasible_returns_empty_route_not_exception(solver):
@@ -405,8 +535,9 @@ def test_solver_infeasible_returns_empty_route_not_exception(solver):
     rewards = {"s": 0, "A": 5}
     visit = {"s": 0, "A": 100}
     edges = {("s", "A"): 1, ("A", "s"): 1}
-    res = solver.solve(make_solver_input(rewards, visit, edges, budget=10, start="s"))
-    assert set(result_route(res)) <= {"s"}
+    si = make_solver_input(rewards, visit, edges, budget=10, start="s")
+    res = solver.solve(si)
+    assert set(result_route(res, si)) <= {"s"}
     assert result_total_reward(res) == 0
 
 
@@ -414,8 +545,9 @@ def test_solver_zero_budget(solver):
     rewards = {"s": 0, "A": 5}
     visit = {"s": 0, "A": 0.01}
     edges = {("s", "A"): 0.01, ("A", "s"): 0.01}
-    res = solver.solve(make_solver_input(rewards, visit, edges, budget=0, start="s"))
-    assert set(result_route(res)) <= {"s"}
+    si = make_solver_input(rewards, visit, edges, budget=0, start="s")
+    res = solver.solve(si)
+    assert set(result_route(res, si)) <= {"s"}
 
 
 def test_solver_is_deterministic(solver):
@@ -423,7 +555,7 @@ def test_solver_is_deterministic(solver):
     visit = {n: 1 for n in rewards}
     edges = {(a, b): 1 for a in rewards for b in rewards if a != b}
     si = make_solver_input(rewards, visit, edges, budget=6, start="s")
-    assert result_route(solver.solve(si)) == result_route(solver.solve(si))
+    assert result_route(solver.solve(si), si) == result_route(solver.solve(si), si)
 
 
 def test_solver_more_budget_never_gives_less_reward(solver):
@@ -446,7 +578,7 @@ def test_solver_scales_to_realistic_size(solver):
     t0 = time.perf_counter()
     res = solver.solve(si)
     assert time.perf_counter() - t0 < 10, "solver za wolny na demo"
-    _feasible(res, rewards, visit, edges, 40)
+    _feasible(res, si, rewards, visit, edges, 40)
 
 
 # =========================================================================== #
@@ -464,7 +596,7 @@ def _solve_sample(encoder, solver, constraints=None):
 def test_decoder_stops_follow_solver_order(encoder, solver, decoder):
     pois, conns, c, si, res = _solve_sample(encoder, solver)
     plan = decoder.decode(res, si, pois, conns, c)
-    expected = [n for n in result_route(res) if n in {poi_id(p) for p in pois}]
+    expected = [n for n in result_route(res, si) if n in {poi_id(p) for p in pois}]
     assert [s[0] for s in plan_stops(plan)] == expected
 
 
