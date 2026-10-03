@@ -1,13 +1,58 @@
-from decimal import Decimal
 from typing import Literal
-
 from app.schemas.configured_schema import ConfiguredSchema
-
+from pydantic import Field
 from datetime import datetime
+from uuid import UUID
+
+PlaceCategory = Literal[
+    "historic",
+    "castle",
+    "museum",
+    "park",
+    "nature",
+    "architecture",
+    "art",
+    "entertainment",
+    "music",
+    "concert",
+    "theater",
+    "cinema",
+    "sport",
+    "forest",
+    "landmark",
+    "religious",
+    "viewpoint",
+    "monument",
+    "garden",
+    "nightlife",
+    "shopping",
+]
+TransportMode = Literal[
+    "walking",
+    "bicycle",
+    "tram",
+    "public_transport",
+    "scooter",
+    "taxi",
+    "car",
+]
+
 
 class Coordinates(ConfiguredSchema):
-    latitude: float
-    longitude: float
+
+    latitude: float = Field(
+        ...,
+        ge=-90.0,
+        le=90.0,
+        description="Szerokość geograficzna w zakresie od -90 do 90",
+    )
+    longitude: float = Field(
+        ...,
+        ge=-180.0,
+        le=180.0,
+        description="Długość geograficzna w zakresie od -180 do 180",
+    )
+
 
 class LLMOutput(ConfiguredSchema):
 
@@ -16,48 +61,30 @@ class LLMOutput(ConfiguredSchema):
 
     start_location: Coordinates
     end_location: Coordinates | None = None
-    budget_pln: Decimal | None = None
-    preferred_categories: list[str]
-    food_preferences: list[str]
-    transport_modes: list[str]
-    prefer_walking: bool
+    preferred_categories: list[PlaceCategory]
+    food_preferences: list[str]  # potencjalnei rowniez literal
+    transport_modes: list[TransportMode]
     avoid_crowds: bool
     weather_sensitive: bool
-    optimization_strategy: Literal["cheapest", "fastest", "most_places", "least_crowded"]
+    optimization_strategy: Literal[
+        "cheapest", "fastest", "most_places", "least_crowded"
+    ]
+    excluded_categories: list[PlaceCategory] = Field(default_factory=list)
 
-    """
-    {
-  "start_at": "2026-10-03T10:00:00+02:00",
-  "end_at": "2026-10-03T17:00:00+02:00",
 
-  "start_location": {
-    "latitude": 50.067,
-    "longitude": 19.912
-  },
+class LLMQuestion(ConfiguredSchema):
+    question: str
 
-  "end_location": null,
 
-  "budget_pln": 150,
+class UserAnswer(ConfiguredSchema):
+    id: UUID
+    answer: str
 
-  "preferred_categories": [
-    "museum",
-    "historic",
-    "food"
-  ],
 
-  "food_preferences": [
-    "polish"
-  ],
-
-  "transport_modes": [
-    "walking",
-    "public_transport"
-  ],
-
-  "prefer_walking": true,
-  "avoid_crowds": false,
-  "weather_sensitive": true,
-
-  "optimization_strategy": "cheapest"
-}
-    """
+class UserInitQuestionnaire(ConfiguredSchema):
+    id: UUID
+    latitude: float
+    longitude: float
+    optimization_strategy: Literal[
+        "cheapest", "fastest", "most_places", "least_crowded"
+    ]
