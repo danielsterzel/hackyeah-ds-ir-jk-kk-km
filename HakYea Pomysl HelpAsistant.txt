@@ -1,0 +1,19 @@
+Pomysł 
+Aystent health inspector AI
+Asysten zdrowej pracy pry kompie 
+ 
+
+Elementy 
+- Odległość od ekranu 
+- poziom wzroku (czy oczy są za nisko czy za wysoko)
+- Postawa
+	Na początku program poakzuje jak siąść konkrety prosto łopadki itd. 
+	Potem na pdostawie kamerki sprawdza jak jest towja postawa 
+	Daje alerty abys zminił psotawe na porpawną 
+- Przypominajka	
+	Picie wody
+	Ćwiczenia
+	Przerwa kawe
+	
+
+Apka desktopowa 
