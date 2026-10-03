@@ -1,4 +1,5 @@
 from uuid import UUID
+import logging
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Response, status
 
@@ -8,7 +9,6 @@ from app.schemas.llm import (
     UserAnswer,
     UserInitQuestionnaire,
 )
-from app.schemas.planning import Plan
 from app.service.llm.questionnaire import OllamaService
 from app.service.planning_service import planning_service
 
@@ -17,18 +17,23 @@ router = APIRouter(
     tags=["questionnaire"],
 )
 
+logger = logging.getLogger(__name__)
+
 services: dict[UUID, OllamaService] = {}
 questionnaire_results: dict[UUID, LLMOutput] = {}
-planning_results: dict[UUID, list[Plan]] = {}
 
 
 async def finalize_questionnaire(
     user_id: UUID,
     service: OllamaService,
 ) -> None:
-    llm_output = await service.finalize()
-    questionnaire_results[user_id] = llm_output
-    planning_results[user_id] = await planning_service.create_plans(llm_output)
+    try:
+        llm_output = await service.finalize()
+        questionnaire_results[user_id] = llm_output
+        await planning_service.create_plans_for_user(user_id, llm_output)
+    except Exception as exc:
+        planning_service.mark_failed(user_id, str(exc))
+        logger.exception("Questionnaire finalization failed for user %s", user_id)
 
 
 @router.post("/init", response_model=LLMQuestion)
@@ -76,6 +81,7 @@ async def answer_question(
         return LLMQuestion(question=question)
 
     services.pop(data.id, None)
+    planning_service.mark_planning(data.id)
     background_tasks.add_task(finalize_questionnaire, data.id, service)
 
     return Response(

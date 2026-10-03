@@ -15,6 +15,7 @@ from datetime import time
 from pathlib import Path
 from typing import Any
 
+from app.schemas.llm import PlaceCategory
 from app.schemas.planning import Coordinates, IPOIService, OpeningPeriod, POI
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,117 @@ _DAYS = {
 _TIME = r"\d{1,2}(?::\d{2})?\s*(?:am|pm)?"
 _RANGE_RE = re.compile(rf"({_TIME})\s*(?:to|do|–|-|—)\s*({_TIME})", re.IGNORECASE)
 _END_OF_DAY = time(23, 59, 59)
+
+_RAW_APIFY_CATEGORY_MAPPING: dict[str, tuple[PlaceCategory, ...]] = {
+    "atrakcja turystyczna": ("landmark",),
+    "obiekt historyczny": ("historic", "landmark"),
+    "miejsce historyczne": ("historic", "landmark"),
+    "muzeum historycznego miejsca": ("museum", "historic", "landmark"),
+    "budynek zabytkowy": ("historic", "architecture", "landmark"),
+    "zamek": ("castle", "historic", "architecture", "landmark"),
+    "willa": ("architecture",),
+    "galeria sztuki": ("art",),
+    "muzeum sztuki": ("museum", "art"),
+    "muzeum sztuki nowoczesnej": ("museum", "art"),
+    "muzeum rzeźby": ("museum", "art"),
+    "promocja sztuki": ("art",),
+    "sztuka": ("art",),
+    "malarstwo": ("art",),
+    "rzeźbiarz": ("art",),
+    "rezerwat przyrody": ("nature",),
+    "teren spacerowy": ("nature",),
+    "park": ("park", "nature"),
+    "park miejski": ("park", "nature"),
+    "park krajobrazowy": ("park", "nature"),
+    "park pamięci": ("park", "nature", "monument"),
+    "ogród": ("garden", "nature"),
+    "ogród osiedlowy": ("garden", "nature"),
+    "ogród botaniczny": ("garden", "nature"),
+    "las państwowy": ("forest", "nature"),
+    "zoo": ("nature", "entertainment"),
+    "centrum rozrywki": ("entertainment",),
+    "rozrywka": ("entertainment",),
+    "park rozrywki": ("entertainment",),
+    "sala zabaw": ("entertainment",),
+    "plac zabaw": ("entertainment",),
+    "tor gokartowy": ("entertainment", "sport"),
+    "klub komediowy": ("entertainment", "nightlife"),
+    "sala koncertowa": ("music", "concert"),
+    "filharmonia": ("music", "concert"),
+    "opera": ("music", "concert", "theater"),
+    "klub muzyczny": ("music", "nightlife"),
+    "bar z muzyką na żywo": ("music", "nightlife"),
+    "amfiteatr": ("music", "concert", "theater"),
+    "centrum kultury": ("art", "entertainment"),
+    "dom kultury": ("art", "entertainment"),
+    "kino": ("cinema", "entertainment"),
+    "centrum rekreacyjno-sportowe": ("sport",),
+    "centrum sportów ekstremalnych": ("sport",),
+    "klub sportowy": ("sport",),
+    "siłownia": ("sport",),
+    "skatepark": ("sport",),
+    "punkt widokowy": ("viewpoint", "landmark"),
+    "taras widokowy": ("viewpoint", "landmark"),
+    "pomnik": ("monument", "landmark"),
+    "rzeźba": ("monument", "art"),
+    "posąg": ("monument", "art"),
+    "przestrzeń pamięci": ("monument", "historic"),
+    "bar": ("nightlife",),
+    "lounge bar": ("nightlife",),
+    "bar koktajlowy": ("nightlife",),
+    "pub": ("nightlife",),
+    "gastropub": ("nightlife",),
+    "piwiarnia": ("nightlife",),
+    "winiarnia": ("nightlife",),
+    "ogródek piwny": ("nightlife",),
+    "klub": ("nightlife",),
+    "supermarket": ("shopping",),
+}
+
+_APIFY_CATEGORY_MAPPING = {
+    fold(category): tags for category, tags in _RAW_APIFY_CATEGORY_MAPPING.items()
+}
+
+_RELIGIOUS_CATEGORY_MARKERS = tuple(
+    fold(marker)
+    for marker in (
+        "kościół",
+        "klasztor",
+        "kaplica",
+        "świątynia",
+        "religijn",
+        "parafia",
+        "bazylika",
+        "katedra",
+        "pielgrzym",
+        "sanktuarium",
+        "synagoga",
+    )
+)
+
+
+def map_apify_categories(categories: list[str]) -> list[PlaceCategory]:
+    """Map localized Apify/Google categories to the planner's stable taxonomy."""
+    mapped: list[PlaceCategory] = []
+
+    for category in categories:
+        normalized = fold(category).strip()
+        tags = list(_APIFY_CATEGORY_MAPPING.get(normalized, ()))
+
+        if "muzeum" in normalized:
+            tags.append("museum")
+        if normalized.startswith("teatr") or normalized == "grupa teatralna":
+            tags.append("theater")
+        if any(marker in normalized for marker in _RELIGIOUS_CATEGORY_MARKERS):
+            tags.append("religious")
+        if normalized.startswith("sklep"):
+            tags.append("shopping")
+
+        for tag in tags:
+            if tag not in mapped:
+                mapped.append(tag)
+
+    return mapped
 
 
 def _parse_time(raw: str, default_meridiem: str | None = None) -> time:
@@ -149,12 +261,19 @@ class GoogleMapsPlaceMapper:
         if raw.get("categoryName") and raw["categoryName"] not in categories:
             categories.insert(0, raw["categoryName"])
 
+        categories.extend(
+            category
+            for category in map_apify_categories(categories)
+            if category not in categories
+        )
+
         return POI(
             id=place_id,
             name=raw.get("title") or place_id,
             location=Coordinates(lat=loc["lat"], lng=loc["lng"]),
             address=raw.get("address"),
-            types=categories,  # uwaga: zlokalizowane nazwy kategorii, nie Google place types
+            # Oryginalne kategorie Apify oraz dopisane stabilne tagi planera.
+            types=categories,
             rating=raw.get("totalScore"),
             user_ratings_total=raw.get("reviewsCount"),
             price_level=parse_price_level(raw.get("price")),

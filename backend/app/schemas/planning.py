@@ -15,15 +15,18 @@ Przepływ danych:
     ISolverDecoder         -> Plan
     IPlanningMapper        -> PlotterPayload (osobny feature: plotter)
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import Sequence
+from typing import Literal, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.schemas.llm import LLMOutput
 
 
 class DomainModel(BaseModel):
@@ -50,9 +53,12 @@ class CostVector(DomainModel):
     Wektor kosztów (zasobów). Wartości całkowite - solvery (OR-Tools, CP-SAT)
     pracują na intach. Dodawalny: koszt trasy = suma kosztów węzłów i krawędzi.
     """
+
     time_s: int = Field(default=0, ge=0, description="Czas w sekundach")
     money_minor: int = Field(
-        default=0, ge=0, description="Pieniądze (paliwo, bilety...) w jednostkach minor, np. grosze"
+        default=0,
+        ge=0,
+        description="Pieniądze (paliwo, bilety...) w jednostkach minor, np. grosze",
     )
 
     def __add__(self, other: CostVector) -> CostVector:
@@ -64,6 +70,7 @@ class CostVector(DomainModel):
 
 class OptionalCostVector(DomainModel):
     """Limity budżetowe; None = brak limitu na dany zasób."""
+
     time_s: int | None = Field(default=None, gt=0)
     money_minor: int | None = Field(default=None, ge=0)
 
@@ -74,6 +81,7 @@ class CostWeights(DomainModel):
         objective = sum(reward) - time_weight * time_s - money_weight * money_minor
     0 = koszt tylko ogranicza (budżet), nie wpływa na cel.
     """
+
     time_weight: float = Field(default=0.0, ge=0)
     money_weight: float = Field(default=0.0, ge=0)
 
@@ -155,7 +163,9 @@ class POIConnection(DomainModel):
     fuel_cost: float = Field(
         default=0.0, ge=0, description="Koszt paliwa/biletu przejazdu w walucie głównej"
     )
-    polyline: str | None = Field(default=None, description="Encoded polyline (dla plotera)")
+    polyline: str | None = Field(
+        default=None, description="Encoded polyline (dla plotera)"
+    )
 
     @model_validator(mode="after")
     def _no_self_loop(self) -> POIConnection:
@@ -221,7 +231,9 @@ class SolverInput(DomainModel):
         seen: set[tuple[int, int]] = set()
         for e in self.edges:
             if not (0 <= e.source < n and 0 <= e.target < n):
-                raise ValueError(f"Krawędź poza zakresem węzłów: {e.source}->{e.target}")
+                raise ValueError(
+                    f"Krawędź poza zakresem węzłów: {e.source}->{e.target}"
+                )
             if e.source == e.target:
                 raise ValueError("Pętle własne są niedozwolone")
             if (e.source, e.target) in seen:
@@ -282,6 +294,13 @@ class Plan(DomainModel):
     skipped_poi_ids: list[str] = Field(default_factory=list)
 
 
+class PlanningResultResponse(DomainModel):
+    status: Literal["planning", "ready", "failed"]
+    plans: list[Plan] | None = None
+    llm_output: LLMOutput | None = None
+    error: str | None = None
+
+
 # --------------------------------------------------------------------------- #
 # Payload dla plotera (osobny feature)
 # --------------------------------------------------------------------------- #
@@ -314,7 +333,9 @@ class PlotterPayload(DomainModel):
 # --------------------------------------------------------------------------- #
 class IPOIService(ABC):
     @abstractmethod
-    async def get_pois(self, query: str, center: Coordinates, radius_m: int) -> list[POI]: ...
+    async def get_pois(
+        self, query: str, center: Coordinates, radius_m: int
+    ) -> list[POI]: ...
 
 
 class IPOIFilterService(ABC):

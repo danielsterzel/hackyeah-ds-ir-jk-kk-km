@@ -820,6 +820,11 @@ async def test_controller_runs_pipeline_for_llm_output(payload):
     plans = await create_plans(payload)
 
     assert 1 <= len(plans) <= 3
+    route_fingerprints = [
+        tuple(tuple(stop.poi.id for stop in day.stops) for day in plan.days)
+        for plan in plans
+    ]
+    assert len(set(route_fingerprints)) == len(plans)
     for plan in plans:
         assert plan.status in {"optimal", "feasible"}
         assert plan.total_reward >= 0

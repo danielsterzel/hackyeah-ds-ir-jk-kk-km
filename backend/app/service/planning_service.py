@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from decimal import Decimal
 from pathlib import Path
+from uuid import UUID
 
 from app.schemas.llm import Coordinates as LLMCoordinates
 from app.schemas.llm import LLMOutput
@@ -15,6 +16,7 @@ from app.schemas.planning import (
     Plan,
     PlanningConstraints,
     PlanningRequest,
+    PlanningResultResponse,
     TravelMode,
 )
 from app.service.planning_json_poi_service import JsonPOIService
@@ -57,6 +59,50 @@ class PlanningService:
         self._dataset_path = dataset_path
         self._search_radius_m = search_radius_m
         self._candidate_limits = candidate_limits
+        self._statuses: dict[UUID, str] = {}
+        self._results: dict[UUID, list[Plan]] = {}
+        self._llm_outputs: dict[UUID, LLMOutput] = {}
+        self._errors: dict[UUID, str] = {}
+
+    def mark_planning(self, user_id: UUID) -> None:
+        self._statuses[user_id] = "planning"
+        self._results.pop(user_id, None)
+        self._llm_outputs.pop(user_id, None)
+        self._errors.pop(user_id, None)
+
+    def mark_failed(self, user_id: UUID, error: str) -> None:
+        self._statuses[user_id] = "failed"
+        self._errors[user_id] = error
+
+    def get_result(self, user_id: UUID) -> PlanningResultResponse | None:
+        status = self._statuses.get(user_id)
+        if status is None:
+            return None
+
+        return PlanningResultResponse(
+            status=status,
+            plans=self._results.get(user_id),
+            llm_output=self._llm_outputs.get(user_id),
+            error=self._errors.get(user_id),
+        )
+
+    async def create_plans_for_user(
+        self,
+        user_id: UUID,
+        payload: LLMOutput,
+    ) -> list[Plan]:
+        self.mark_planning(user_id)
+        self._llm_outputs[user_id] = payload
+
+        try:
+            plans = await self.create_plans(payload)
+        except Exception as exc:
+            self.mark_failed(user_id, str(exc))
+            raise
+
+        self._results[user_id] = plans
+        self._statuses[user_id] = "ready"
+        return plans
 
     async def create_plans(self, payload: LLMOutput) -> list[Plan]:
         request = self._to_planning_request(payload)
@@ -72,7 +118,7 @@ class PlanningService:
             raise NoPoisFoundError("Nie znaleziono POI w obszarze planowania.")
 
         plans: list[Plan] = []
-        seen: set[str] = set()
+        seen: set[tuple[tuple[str, ...], ...]] = set()
 
         for limit in self._candidate_limits:
             filtered_pois = PreferencePOIFilterService(
@@ -104,7 +150,12 @@ class PlanningService:
                 constraints,
             )
 
-            fingerprint = plan.model_dump_json()
+            # Candidate limits can produce the same route with a different
+            # skipped_poi_ids list. Only the actual itinerary identifies a
+            # distinct plan returned to the client.
+            fingerprint = tuple(
+                tuple(stop.poi.id for stop in day.stops) for day in plan.days
+            )
             if fingerprint in seen:
                 continue
 

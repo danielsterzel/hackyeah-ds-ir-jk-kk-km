@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Inter } from "next/font/google";
+import { Geist, Geist_Mono, Inter, Montserrat } from "next/font/google";
 
 import { Providers } from "@/app/providers";
 import { cn } from "@/lib/utils";
@@ -17,6 +17,9 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const montserrat = Montserrat({
+  subsets: ["latin"]
+})
 export const metadata: Metadata = {
   title: "VentureFlux",
   description: "Osobisty planer zwiedzania Krakowa",
@@ -34,7 +37,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         "font-sans",
       )}
     >
-      <body className="flex min-h-full flex-col">
+      <body className={`flex min-h-full flex-col ${montserrat.className}`}>
         <Providers>{children}</Providers>
       </body>
     </html>

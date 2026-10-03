@@ -7,7 +7,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   ArrowRight,
   Check,
@@ -35,6 +35,13 @@ import { BACKEND_URL } from "@/env";
 type QuestionnaireResponse = {
   question?: string;
   done: boolean;
+};
+
+type PlanningResultResponse = {
+  status: "planning" | "ready" | "failed";
+  plans: unknown[] | null;
+  llm_output: unknown | null;
+  error: string | null;
 };
 
 type OptimizationStrategy =
@@ -123,6 +130,20 @@ async function postQuestionnaire<TBody>(
   };
 }
 
+async function getPlanningResult(
+  userId: string,
+): Promise<PlanningResultResponse> {
+  const response = await fetch(`${BACKEND_URL}/planning/${userId}`, {
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw new Error("Nie udało się pobrać wyniku planowania.");
+  }
+
+  return response.json() as Promise<PlanningResultResponse>;
+}
+
 function getCurrentCoordinates(): Promise<GeolocationCoordinates> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
@@ -156,6 +177,79 @@ function getOrCreateUserId(): string {
   return userId;
 }
 
+function getProposedAttractions(plans: unknown[] | null): unknown[] {
+  if (!plans) {
+    return [];
+  }
+
+  const seenPoiIds = new Set<string>();
+  const attractions = plans.flatMap((plan) => {
+    if (!plan || typeof plan !== "object" || !("days" in plan)) {
+      return [];
+    }
+
+    const days = (plan as { days?: unknown }).days;
+    if (!Array.isArray(days)) {
+      return [];
+    }
+
+    return days.flatMap((day) => {
+      if (!day || typeof day !== "object" || !("stops" in day)) {
+        return [];
+      }
+
+      const stops = (day as { stops?: unknown }).stops;
+      return Array.isArray(stops) ? stops : [];
+    });
+  });
+
+  return attractions.filter((attraction) => {
+    const poiId = getAttractionPoiId(attraction);
+
+    if (!poiId) {
+      return true;
+    }
+    if (seenPoiIds.has(poiId)) {
+      return false;
+    }
+
+    seenPoiIds.add(poiId);
+    return true;
+  });
+}
+
+function getAttractionPoiId(attraction: unknown): string | null {
+  if (!attraction || typeof attraction !== "object" || !("poi" in attraction)) {
+    return null;
+  }
+
+  const poi = (attraction as { poi?: unknown }).poi;
+  if (!poi || typeof poi !== "object" || !("id" in poi)) {
+    return null;
+  }
+
+  const id = (poi as { id?: unknown }).id;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+function getAttractionName(attraction: unknown, index: number): string {
+  if (
+    attraction &&
+    typeof attraction === "object" &&
+    "poi" in attraction
+  ) {
+    const poi = (attraction as { poi?: unknown }).poi;
+    if (poi && typeof poi === "object" && "name" in poi) {
+      const name = (poi as { name?: unknown }).name;
+      if (typeof name === "string") {
+        return name;
+      }
+    }
+  }
+
+  return `Atrakcja ${index + 1}`;
+}
+
 export default function Home() {
   const [question, setQuestion] = useState<string | null>(null);
   const [answer, setAnswer] = useState("");
@@ -164,7 +258,7 @@ export default function Home() {
   const [answeredCount, setAnsweredCount] = useState(0);
   const [isLocating, setIsLocating] = useState(false);
   const [isFinished, setIsFinished] = useState(false);
-  const userId = useRef<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const answerField = useRef<HTMLTextAreaElement>(null);
 
   const showError = (error: Error) => {
@@ -197,10 +291,11 @@ export default function Home() {
 
   const submitAnswer = useMutation({
     mutationFn: (value: string) => {
-      userId.current ??= getOrCreateUserId();
+      const currentUserId = getOrCreateUserId();
+      setUserId(currentUserId);
 
       return postQuestionnaire("/questionnaire/answer", {
-        id: userId.current,
+        id: currentUserId,
         answer: value,
       });
     },
@@ -234,11 +329,12 @@ export default function Home() {
 
     try {
       const coordinates = await getCurrentCoordinates();
-      userId.current ??= getOrCreateUserId();
+      const currentUserId = getOrCreateUserId();
+      setUserId(currentUserId);
 
       initQuestionnaire.mutate(
         {
-          id: userId.current,
+          id: currentUserId,
           latitude: coordinates.latitude,
           longitude: coordinates.longitude,
           optimizationStrategy: strategy,
@@ -302,7 +398,10 @@ export default function Home() {
 
       <section className="relative z-10 mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-8 sm:px-8 sm:py-12">
         {isFinished ? (
-          <PlanningState answeredQuestions={answeredCount} />
+          <PlanningState
+            answeredQuestions={answeredCount}
+            userId={userId}
+          />
         ) : (
           <Card className="w-full border border-white/80 bg-white/90 py-0 shadow-[0_24px_70px_rgba(63,143,177,0.16)] ring-1 ring-[#cdeaf6]/70 backdrop-blur">
             <CardHeader className="gap-4 border-b border-[#e4f2f8] px-6 py-6 sm:px-9 sm:py-8">
@@ -595,7 +694,104 @@ function TypingQuestion({ question }: { question: string }) {
   );
 }
 
-function PlanningState({ answeredQuestions }: { answeredQuestions: number }) {
+function PlanningState({
+  answeredQuestions,
+  userId,
+}: {
+  answeredQuestions: number;
+  userId: string | null;
+}) {
+  const planningResult = useQuery({
+    queryKey: ["planning-result", userId],
+    queryFn: () => getPlanningResult(userId!),
+    enabled: Boolean(userId),
+    retry: false,
+    refetchInterval: (query) =>
+      query.state.data?.status === "planning" ? 1_000 : false,
+  });
+
+  if (planningResult.data?.status === "ready") {
+    const attractions = getProposedAttractions(planningResult.data.plans);
+
+    return (
+      <Card className="w-full border border-white/80 bg-white/90 py-0 shadow-[0_24px_70px_rgba(63,143,177,0.16)] ring-1 ring-[#cdeaf6]/70 backdrop-blur">
+        <CardHeader className="border-b border-[#e4f2f8] px-6 py-6 text-left sm:px-9">
+          <div className="mb-2 inline-flex w-fit items-center gap-2 rounded-full bg-[#e8f8ff] px-3 py-1.5 text-xs font-bold text-[#128ec0]">
+            <Check className="size-3.5" aria-hidden="true" />
+            Plan gotowy
+          </div>
+          <CardTitle className="text-2xl font-extrabold text-[#17364d]">
+            Proponowane atrakcje
+          </CardTitle>
+          <CardDescription>
+            Tymczasowy podgląd pozycji zwróconych przez moduł planning.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5 p-4 sm:p-6">
+          {attractions.length > 0 ? (
+            <div className="space-y-4">
+              {attractions.map((attraction, index) => (
+                <article
+                  key={getAttractionPoiId(attraction) ?? index}
+                  className="overflow-hidden rounded-2xl border border-[#dcecf3] bg-white"
+                >
+                  <div className="flex items-center gap-3 border-b border-[#e4f2f8] px-4 py-3 text-left">
+                    <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#e8f8ff] text-sm font-bold text-[#128ec0]">
+                      {index + 1}
+                    </span>
+                    <h2 className="font-bold text-[#17364d]">
+                      {getAttractionName(attraction, index)}
+                    </h2>
+                  </div>
+                  <pre className="max-h-80 overflow-auto bg-[#102a3b] p-4 text-left text-xs leading-6 whitespace-pre text-[#d9f5ff]">
+                    {JSON.stringify(attraction, null, 2)}
+                  </pre>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="rounded-2xl bg-[#f2faff] p-5 text-sm text-[#668094]">
+              Planner nie zwrócił żadnych atrakcji.
+            </p>
+          )}
+
+          <details className="overflow-hidden rounded-2xl border border-amber-200 bg-amber-50/70 text-left">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-amber-900">
+              Debug: LLMOutput
+            </summary>
+            <pre className="max-h-96 overflow-auto border-t border-amber-200 bg-[#241f16] p-4 text-xs leading-6 whitespace-pre text-amber-50">
+              {JSON.stringify(planningResult.data.llm_output, null, 2)}
+            </pre>
+          </details>
+
+          <details className="overflow-hidden rounded-2xl border border-[#dcecf3] text-left">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-[#35556c]">
+              Debug: pełny output planera
+            </summary>
+            <pre className="max-h-96 overflow-auto border-t border-[#dcecf3] bg-[#102a3b] p-4 text-xs leading-6 whitespace-pre text-[#d9f5ff]">
+              {JSON.stringify(planningResult.data.plans, null, 2)}
+            </pre>
+          </details>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (planningResult.data?.status === "failed" || planningResult.isError) {
+    return (
+      <Card className="w-full border border-red-100 bg-white/90 py-0 text-center shadow-[0_24px_70px_rgba(63,143,177,0.16)]">
+        <CardContent className="flex min-h-80 flex-col items-center justify-center px-7 py-12">
+          <h1 className="text-2xl font-extrabold text-[#17364d]">
+            Nie udało się ułożyć planu
+          </h1>
+          <p className="mt-3 max-w-lg text-sm leading-6 text-[#668094]">
+            {planningResult.data?.error ?? planningResult.error?.message}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card className="w-full border border-white/80 bg-white/90 py-0 text-center shadow-[0_24px_70px_rgba(63,143,177,0.16)] ring-1 ring-[#cdeaf6]/70 backdrop-blur">
       <CardContent className="flex min-h-112 flex-col items-center justify-center px-7 py-12">
