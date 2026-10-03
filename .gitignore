@@ -1,0 +1,124 @@
+# =========================
+# Environment / secrets
+# =========================
+.env
+.env.*
+!.env.example
+
+*.pem
+*.key
+*.crt
+secrets/
+credentials/
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+.venv/
+venv/
+env/
+ENV/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# =========================
+# Node / TypeScript
+# =========================
+node_modules/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# package manager caches
+.npm/
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+
+# =========================
+# Next.js / React / Vite
+# =========================
+.next/
+out/
+.nuxt/
+.vite/
+.turbo/
+
+coverage/
+
+# Build outputs
+dist/
+build/
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# =========================
+# Database / local data
+# =========================
+*.db
+*.sqlite
+*.sqlite3
+
+data/
+uploads/
+storage/
+
+# =========================
+# Docker
+# =========================
+docker-compose.override.yml
+
+# =========================
+# IDEs / editors
+# =========================
+.idea/
+.vscode/
+
+*.swp
+*.swo
+
+# =========================
+# macOS / Windows
+# =========================
+.DS_Store
+.AppleDouble
+.LSOverride
+
+Thumbs.db
+Desktop.ini
+
+# =========================
+# Logs / temporary files
+# =========================
+*.log
+logs/
+
+tmp/
+temp/
+.cache/
+
+# =========================
+# Misc local config
+# =========================
+.local/
