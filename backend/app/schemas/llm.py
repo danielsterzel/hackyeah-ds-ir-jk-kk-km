@@ -1,23 +1,29 @@
 from decimal import Decimal
+from typing import Literal
 
 from app.schemas.configured_schema import ConfiguredSchema
 
 from datetime import datetime
+
+class Coordinates(ConfiguredSchema):
+    latitude: float
+    longitude: float
+
 class LLMOutput(ConfiguredSchema):
 
     start_at: datetime
     end_at: datetime
 
-    start_location: dict[str, float]
-    end_location: dict[str, float] | None
-    budget_pln: Decimal
+    start_location: Coordinates
+    end_location: Coordinates | None = None
+    budget_pln: Decimal | None = None
     preferred_categories: list[str]
     food_preferences: list[str]
     transport_modes: list[str]
     prefer_walking: bool
     avoid_crowds: bool
     weather_sensitive: bool
-    optimization_strategy: bool
+    optimization_strategy: Literal["cheapest", "fastest", "most_places", "least_crowded"]
 
     """
     {
