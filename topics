@@ -1,69 +1,69 @@
-Topics:
-===========
+# Topics:
+
 Smart city
 
 - Muzea, porównywanie cen, dni otwarte, zniżki, porównywarka
 - Planowanie trasy, lista miejsce, apka zwraca plan dnia, kiedy wyjechać i jaki środek komunikacji wybrać, żeby było jak najtaniej / jak najszybciej / najbardziej ekonomicznie
 - Rekrutacja na studia - jedno spójne miejsce gdzie można to wszystko zrobić
+- pnkty za aktywność w mieście - np. za spacery, rower, bieganie, aktywność fizyczną, zdrowe odżywianie, udział w wydarzeniach kulturalnych, wolontariat itp. - punkty można wymieniać na zniżki w muzeach, kinach, restauracjach, sklepach sportowych itp.
 
+POKRYCIE Z TEMATAMI:
 
-POKRYCIE Z TEMATAMI: 
 - ai
 - krakow
 - malopolska
 - smart city
-- zdrowie potencjalnie bo kroki promowanie spacerów, rowerów, stacje rowerowe etc etc
-===========
+- # zdrowie potencjalnie bo kroki promowanie spacerów, rowerów, stacje rowerowe etc etc
 
-Pomysł 
+Pomysł
 Aystent health inspector AI
-Asysten zdrowej pracy pry kompie 
- 
+Asysten zdrowej pracy pry kompie
 
-Elementy 
-- Odległość od ekranu 
+Elementy
+
+- Odległość od ekranu
 - poziom wzroku (czy oczy są za nisko czy za wysoko)
 - Postawa
-	Na początku program poakzuje jak siąść konkrety prosto łopadki itd. 
-	Potem na pdostawie kamerki sprawdza jak jest towja postawa 
-	Daje alerty abys zminił psotawe na porpawną 
-- Przypominajka	
-	Picie wody
-	Ćwiczenia
-	Przerwa kawe
-	
+  Na początku program poakzuje jak siąść konkrety prosto łopadki itd.
+  Potem na pdostawie kamerki sprawdza jak jest towja postawa
+  Daje alerty abys zminił psotawe na porpawną
+- Przypominajka
+  Picie wody
+  Ćwiczenia
+  Przerwa kawe
 
-Apka desktopowa 
-
+Apka desktopowa
 
 Pokrycie:
+
 - zdrowie/ sports
 - AI
 
 ===========
 
 System dla maloposlki
-pod 
+pod
 
 informacje o malopolskim wojewodztwie
-np zabytki jakie 
+np zabytki jakie
 funkcje glowosania na najlepsze atrakcje
 najlepsez miejsca turystyczne
 
 jedno miejsce do historii zabytkow
-moze jakis ekran o historii glownej malpoki w postaci lini czasu idacej w dol gdzie kolejne daty i wiadomosci pojawiaja sie z dolu idac z opacity 0 do opacity 1 
+moze jakis ekran o historii glownej malpoki w postaci lini czasu idacej w dol gdzie kolejne daty i wiadomosci pojawiaja sie z dolu idac z opacity 0 do opacity 1
 a gorne ida z opacity 1 do 0
 
 dodatkowo strona do poszukiwania pomocy
 gdzie bylyby rozdzielone segmenty na pomoc prawna ,zdrowotna, administracyjna etc etc
 oraz np strony typu : zielony ruch czyli tam strona pokazujaca parki sporotowe inicjatywy w sposob ladny, troche lakoniczny czyli jak najbardzie j skondensowany i user friendly bez koniecznosci czytania 20 bilionwo charów.
 
-zgalszanie technolgoii staartup 
+zgalszanie technolgoii staartup
 poszukiwanie sponsorow
 poszukiwanie czlonkow zespolu
 opinie ekspertow
 
 Pokrycie:
+
 - ai
 - miasto krakow
 - malopolska
