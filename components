@@ -1,0 +1,78 @@
+STACK:
+
+REACT NEXT + TS + TAILWIND + shadcni + tanstack + lucide (ikonki)
+
+FASTPI PYTHON, 
+
+
+POSTGRESQL albo jakis inny jesli nierelacyjna (np MongoDB)
+
+provider najpeewniej SupaBase
+zapytac llma jak z baza danych czy relacyjna czy nie
+pytanie czy to w ogole ma jakies znaczenie????
+
+grafowa? tabelaryczna baza danych
+
+alembic potencjalnie do migracji
+
+co do mapek? openstreetmap czy google api? albo cos innego?
+to ma byc tanio czli darmowe
+
+pip
+npm
+
+pytanie czy nie bedzei potrzebne jakies bazy danych typu pinecone / pgvector????
+
+
+LLM: Ollama
+
+algorytm optymalizacji: do ustalenia - research
+
+FRONTEND
+- 
+
+BACKNED:
+
+
+
+wywiad z llmem jaka wycieczka gdzie co i jak jak wolisz transport i tak dalej
+zwraca schemat konfiguracyjny co i jak (nie wiem jaka strukutra ale mozliwe ze JSON)
+
+
+3 typy wywiadów: transport, co chcesz zoabczyc albo jaki typ atrakcji, jakie jedzenie lubisz.
+potencjalny model biznesowy oplacanie przez restauracje zeby pozycjonowac lepiej albo jakos tak.
+
+Mapa:
+
+- planowanie trasy - komiunikcacja miejscka, taksówki, pieszo, rowery / hulajnogi, wlasny transport(dlugosc trasy + paliwo + spaliny) + opcjonalne inne transporty i porownanie ktory tanszy albo inne metryki w stylu gowno + przystanki + w zaleznosci od pogody
+-  
+
+
+
+Ogolne:
+popozycja A  - najtansze
+propozycja B - najszybsze
+propozycja C - najwiecej zoabczyc
+propozycja D - najmniej zatlumione
+
+inne metryki: priorytetyzacja pieszo, najblizej punktu, zaleznosc pogody
+
+planowanie budzetu
+planowanie czasu !!!!!!!!!!! jesli nie miesci siew ramach czasowych to musimy to !!!
+
+czyli jesli zaproponuje zewnetrzne to sprawdza pogode
+
+
+waznosc:
+1. Wywiad + planowanie trasy
+2. Optymalizacja na MVP moze byc samo najtansze / ilosc atrakcji
+3. 
+4. Pogoda
+5. statystki
+
+
+TO JEST POD KRAKÓW SAM!!
+
+quad tree albo geohash? to jako potencjalne w sensie w obrebie dzielnic Krakowa.
+
+
