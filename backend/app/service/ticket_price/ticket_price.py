@@ -13,7 +13,7 @@ load_dotenv()
 SERVICE_DIRECTORY = Path(__file__).resolve().parent
 TICKET_PROMPT_FILEPATH = SERVICE_DIRECTORY / "ticket_prompt.txt"
 
-MODEL = "qwen3:30b"
+MODEL = "gpt-oss:120b"
 
 prompt = TICKET_PROMPT_FILEPATH.read_text(
     encoding="utf-8"
@@ -21,6 +21,7 @@ prompt = TICKET_PROMPT_FILEPATH.read_text(
 
 
 client = AsyncClient(
+    host="https://ollama.com",
     headers={
         "Authorization": f"Bearer {settings.ollama_api_key}"
     }
