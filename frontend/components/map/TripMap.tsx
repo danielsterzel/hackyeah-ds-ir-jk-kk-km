@@ -17,6 +17,7 @@ import {
   useMap,
 } from "react-leaflet";
 import L, { type LatLngExpression, type PathOptions } from "leaflet";
+import "leaflet-routing-machine";
 import { Clock3, Footprints, Wallet } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +49,34 @@ const legStyles: Record<Leg["mode"], PathOptions> = {
   taxi: { color: "#dc2626", weight: 5, opacity: 0.92 },
   car: { color: "#dc2626", weight: 5, opacity: 0.92 },
 };
+
+type RoutingProfile = "foot" | "bike" | "car";
+type RoutingRouter = object;
+type RoutingControl = L.Control & {
+  on: (eventName: string, handler: () => void) => RoutingControl;
+};
+type RoutingApi = {
+  control: (options: {
+    waypoints: L.LatLng[];
+    router: RoutingRouter;
+    addWaypoints: boolean;
+    draggableWaypoints: boolean;
+    fitSelectedRoutes: boolean;
+    show: boolean;
+    createMarker: () => null;
+    lineOptions: { styles: PathOptions[] };
+  }) => RoutingControl;
+  osrmv1: (options: { profile: RoutingProfile }) => RoutingRouter;
+};
+
+const routingApi = (L as typeof L & { Routing?: RoutingApi }).Routing;
+
+function getRoutingProfile(mode: Leg["mode"]): RoutingProfile | null {
+  if (mode === "walk") return "foot";
+  if (mode === "bike" || mode === "scooter") return "bike";
+  if (mode === "car" || mode === "taxi") return "car";
+  return null;
+}
 
 function FitRoute({ points }: { points: LatLngExpression[] }) {
   const map = useMap();
@@ -122,7 +151,10 @@ function StopMarker({
             </p>
           )}
           {stop.warnings.map((warning) => (
-            <p key={warning.code} className="text-sm font-semibold text-amber-700">
+            <p
+              key={warning.code}
+              className="text-sm font-semibold text-amber-700"
+            >
               {warning.message}
             </p>
           ))}
@@ -139,13 +171,56 @@ function RouteLine({ leg }: { leg: Leg }) {
         <div className="space-y-1 text-slate-800">
           <p className="font-semibold">{modeLabel(leg.mode)}</p>
           <p>
-            {formatDistance(leg.distance_m)} · {Math.round(leg.duration_min)} min
+            {formatDistance(leg.distance_m)} · {Math.round(leg.duration_min)}{" "}
+            min
           </p>
           <p>{leg.cost_pln.toFixed(2)} zł</p>
         </div>
       </Popup>
     </Polyline>
   );
+}
+
+function RoutedLeg({ leg, from, to }: { leg: Leg; from: Stop; to: Stop }) {
+  const map = useMap();
+  const [hasExternalRoute, setHasExternalRoute] = useState(false);
+  const profile = getRoutingProfile(leg.mode);
+
+  useEffect(() => {
+    if (!routingApi || !profile) return;
+
+    const control = routingApi.control({
+      waypoints: [
+        L.latLng(from.place.lat, from.place.lng),
+        L.latLng(to.place.lat, to.place.lng),
+      ],
+      router: routingApi.osrmv1({ profile }),
+      addWaypoints: false,
+      draggableWaypoints: false,
+      fitSelectedRoutes: false,
+      show: false,
+      createMarker: () => null,
+      lineOptions: { styles: [legStyles[leg.mode]] },
+    });
+
+    control.on("routesfound", () => setHasExternalRoute(true));
+    control.on("routingerror", () => setHasExternalRoute(false));
+    control.addTo(map);
+
+    return () => {
+      map.removeControl(control);
+    };
+  }, [
+    from.place.lat,
+    from.place.lng,
+    leg.mode,
+    map,
+    profile,
+    to.place.lat,
+    to.place.lng,
+  ]);
+
+  return profile && hasExternalRoute ? null : <RouteLine leg={leg} />;
 }
 
 function modeLabel(mode: Leg["mode"]) {
@@ -212,7 +287,10 @@ export function TripMap({ plan }: { plan: RoutePlan }) {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Badge variant="secondary" className="rounded-full px-4 py-2 text-sm">
+            <Badge
+              variant="secondary"
+              className="rounded-full px-4 py-2 text-sm"
+            >
               {strategyLabels[plan.strategy]}
             </Badge>
             <Badge variant="outline" className="rounded-full px-4 py-2 text-sm">
@@ -254,9 +332,20 @@ export function TripMap({ plan }: { plan: RoutePlan }) {
                 selectionVersion={selectionVersion}
                 markers={markers}
               />
-              {plan.legs.map((leg) => (
-                <RouteLine key={leg.id} leg={leg} />
-              ))}
+              {plan.legs.map((leg) => {
+                const from = plan.stops.find(
+                  (stop) => stop.id === leg.from_stop_id,
+                );
+                const to = plan.stops.find(
+                  (stop) => stop.id === leg.to_stop_id,
+                );
+
+                return from && to ? (
+                  <RoutedLeg key={leg.id} leg={leg} from={from} to={to} />
+                ) : (
+                  <RouteLine key={leg.id} leg={leg} />
+                );
+              })}
               {plan.stops.map((stop) => (
                 <StopMarker key={stop.id} stop={stop} setMarker={setMarker} />
               ))}
@@ -309,16 +398,21 @@ export function TripMap({ plan }: { plan: RoutePlan }) {
                 </p>
                 {(plan.summary.fits_time === false ||
                   plan.summary.fits_budget === false) && (
-                  <div role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-800">
+                  <div
+                    role="alert"
+                    className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-800"
+                  >
                     {plan.summary.fits_time === false && (
                       <p>
-                        Plan przekracza dostępny czas o {plan.summary.time_over_min} min.
+                        Plan przekracza dostępny czas o{" "}
+                        {plan.summary.time_over_min} min.
                       </p>
                     )}
                     {plan.summary.fits_budget === false &&
                       plan.summary.budget_over_pln !== null && (
                         <p>
-                          Plan przekracza budżet o {plan.summary.budget_over_pln.toFixed(2)} zł.
+                          Plan przekracza budżet o{" "}
+                          {plan.summary.budget_over_pln.toFixed(2)} zł.
                         </p>
                       )}
                   </div>
@@ -342,14 +436,28 @@ export function TripMap({ plan }: { plan: RoutePlan }) {
                         }}
                         className="group flex w-full items-start gap-3 rounded-xl p-2.5 text-left transition hover:bg-emerald-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
                       >
-                        <span className={`mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${stop.kind === "start" ? "bg-emerald-100 text-emerald-800" : stop.kind === "end" ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-800"}`}>
-                          {stop.kind === "start" ? "S" : stop.kind === "end" ? "K" : stop.order}
+                        <span
+                          className={`mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${stop.kind === "start" ? "bg-emerald-100 text-emerald-800" : stop.kind === "end" ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-800"}`}
+                        >
+                          {stop.kind === "start"
+                            ? "S"
+                            : stop.kind === "end"
+                              ? "K"
+                              : stop.order}
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-semibold group-hover:text-emerald-800">{stop.place.name}</span>
+                          <span className="block truncate text-sm font-semibold group-hover:text-emerald-800">
+                            {stop.place.name}
+                          </span>
                           <span className="mt-0.5 block text-xs text-slate-500">
-                            {stop.arrival_at ? new Date(stop.arrival_at).toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" }) : "Start"}
-                            {stop.kind === "attraction" && ` · ${stop.price_pln ? `${stop.price_pln.toFixed(0)} zł` : "bezpłatnie"}`}
+                            {stop.arrival_at
+                              ? new Date(stop.arrival_at).toLocaleTimeString(
+                                  "pl-PL",
+                                  { hour: "2-digit", minute: "2-digit" },
+                                )
+                              : "Start"}
+                            {stop.kind === "attraction" &&
+                              ` · ${stop.price_pln ? `${stop.price_pln.toFixed(0)} zł` : "bezpłatnie"}`}
                           </span>
                           {stop.closes_at && (
                             <span className="mt-0.5 block text-xs text-slate-500">
@@ -372,24 +480,42 @@ export function TripMap({ plan }: { plan: RoutePlan }) {
             {plan.warnings.length > 0 && (
               <div className="space-y-2" aria-label="Ostrzeżenia">
                 {plan.warnings.map((warning, index) => (
-                  <div key={`${warning.code}-${index}`} role="status" className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-                    <span className="font-semibold">Informacja · </span>{warning.message}
+                  <div
+                    key={`${warning.code}-${index}`}
+                    role="status"
+                    className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+                  >
+                    <span className="font-semibold">Informacja · </span>
+                    {warning.message}
                   </div>
                 ))}
               </div>
             )}
           </aside>
         </div>
-        <p className="mt-5 text-xs text-slate-500">Mapa © OpenStreetMap contributors</p>
+        <p className="mt-5 text-xs text-slate-500">
+          Mapa © OpenStreetMap contributors
+        </p>
       </div>
     </div>
   );
 }
 
-function Metric({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+function Metric({
+  icon,
+  label,
+  value,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+}) {
   return (
     <div className="rounded-2xl bg-[#f4f7f3] p-3">
-      <div className="flex items-center gap-1.5 text-emerald-800">{icon}<span className="text-xs font-medium text-slate-600">{label}</span></div>
+      <div className="flex items-center gap-1.5 text-emerald-800">
+        {icon}
+        <span className="text-xs font-medium text-slate-600">{label}</span>
+      </div>
       <p className="mt-1.5 text-base font-semibold tabular-nums">{value}</p>
     </div>
   );

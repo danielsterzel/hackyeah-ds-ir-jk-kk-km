@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "leaflet/dist/leaflet.css";
+@import "leaflet-routing-machine/dist/leaflet-routing-machine.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -133,4 +134,8 @@
 .leaflet-container {
   font-family: var(--font-sans), Arial, sans-serif;
   z-index: 0;
+}
+
+.leaflet-routing-container {
+  display: none;
 }
