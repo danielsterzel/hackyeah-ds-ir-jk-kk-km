@@ -11,9 +11,12 @@ from app.schemas.llm import Coordinates as LLMCoordinates
 from app.schemas.llm import LLMOutput
 from app.schemas.planning import (
     Coordinates,
+    CostVector,
     CostWeights,
+    IPOICostService,
     OptionalCostVector,
     Plan,
+    PlanDay,
     PlanningConstraints,
     PlanningRequest,
     PlanningResultResponse,
@@ -23,6 +26,7 @@ from app.schemas.planning import (
 from app.service.planning_json_poi_service import JsonPOIService
 from app.service.planning_mapper import RoutePlanMapper
 from app.service.planning_or_solver import OrToolsSolver
+from app.service.planning_ollama_poi_cost_service import OllamaPOICostService
 from app.service.planning_poi_filter_service import PreferencePOIFilterService
 from app.service.planning_simple_connection_service import SimpleConnectionService
 from app.service.planning_simple_solver_decoder import SimpleSolverDecoder
@@ -57,10 +61,12 @@ class PlanningService:
         dataset_path: Path = DEFAULT_DATASET_PATH,
         search_radius_m: int = 25_000,
         candidate_limits: tuple[int, ...] = (30, 60, 100),
+        poi_cost_service: IPOICostService | None = None,
     ) -> None:
         self._dataset_path = dataset_path
         self._search_radius_m = search_radius_m
         self._candidate_limits = candidate_limits
+        self._poi_cost_service = poi_cost_service or OllamaPOICostService()
         self._statuses: dict[UUID, str] = {}
         self._results: dict[UUID, list[Plan]] = {}
         self._routes: dict[UUID, RoutePlan] = {}
@@ -204,6 +210,7 @@ class PlanningService:
                 connections,
                 constraints,
             )
+            plan = await self._enrich_plan_costs(plan)
 
             # Candidate limits can produce the same route with a different
             # skipped_poi_ids list. Only the actual itinerary identifies a
@@ -223,6 +230,53 @@ class PlanningService:
             raise NoFeasiblePlanError("Nie udało się utworzyć wykonalnego planu.")
 
         return plans
+
+    async def _enrich_plan_costs(self, plan: Plan) -> Plan:
+        """Uzupełnij koszty wyłącznie dla POI obecnych w zdekodowanej trasie."""
+        pois = {
+            stop.poi.id: stop.poi
+            for day in plan.days
+            for stop in day.stops
+        }
+        if not pois:
+            return plan
+
+        enriched = {
+            poi_id: await self._poi_cost_service.enrich_poi_cost(poi)
+            for poi_id, poi in pois.items()
+        }
+        days: list[PlanDay] = []
+        for day in plan.days:
+            stops = [
+                stop.model_copy(update={"poi": enriched[stop.poi.id]})
+                for stop in day.stops
+            ]
+            time_delta = sum(
+                stop.poi.visit_cost.time_s - original.poi.visit_cost.time_s
+                for stop, original in zip(stops, day.stops)
+            )
+            money_delta = sum(
+                stop.poi.visit_cost.money_minor - original.poi.visit_cost.money_minor
+                for stop, original in zip(stops, day.stops)
+            )
+            days.append(
+                day.model_copy(
+                    update={
+                        "stops": stops,
+                        "total_cost": CostVector(
+                            time_s=day.total_cost.time_s + time_delta,
+                            money_minor=day.total_cost.money_minor + money_delta,
+                        ),
+                    }
+                )
+            )
+
+        return plan.model_copy(
+            update={
+                "days": days,
+                "total_cost": sum((day.total_cost for day in days), CostVector()),
+            }
+        )
 
     def _to_planning_request(self, payload: LLMOutput) -> PlanningRequest:
         return PlanningRequest(

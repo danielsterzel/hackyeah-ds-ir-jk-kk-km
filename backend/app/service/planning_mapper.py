@@ -219,7 +219,11 @@ class RoutePlanMapper:
             visit_duration_min=max(
                 0, round((stop.departure - stop.arrival).total_seconds() / 60)
             ),
-            price_pln=stop.poi.visit_cost.money_minor / 100,
+            price_pln=(
+                stop.poi.visit_cost.money_minor / 100
+                if stop.poi.visit_cost.money_minor > 0
+                else None
+            ),
             opens_at=opens_at,
             closes_at=closes_at,
             warnings=warnings,

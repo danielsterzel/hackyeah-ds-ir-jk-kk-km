@@ -318,7 +318,7 @@ class RouteStop(DomainModel):
     arrival_at: datetime
     departure_at: datetime
     visit_duration_min: int = Field(ge=0)
-    price_pln: float = Field(ge=0)
+    price_pln: float | None = Field(default=None, ge=0)
     opens_at: datetime | None = None
     closes_at: datetime | None = None
     warnings: list[RouteWarning] = Field(default_factory=list)
@@ -402,6 +402,11 @@ class IPOIService(ABC):
     async def get_pois(
         self, query: str, center: Coordinates, radius_m: int
     ) -> list[POI]: ...
+
+
+class IPOICostService(ABC):
+    @abstractmethod
+    async def enrich_poi_cost(self, poi: POI) -> POI: ...
 
 
 class IPOIFilterService(ABC):
