@@ -20,6 +20,7 @@ import math
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -33,6 +34,7 @@ from app.api.planning_controller import create_plans
 from app.service.planning_json_poi_service import JsonPOIService
 from app.service.planning_mapper import SimplePlanningMapper
 from app.service.planning_or_solver import OrToolsSolver
+from app.service.planning_service import PlanningService
 from app.service.planning_simple_connection_service import SimpleConnectionService
 from app.service.planning_simple_solver_decoder import SimpleSolverDecoder
 from app.service.planning_simple_solver_encoder import SimpleSolverEncoder
@@ -847,3 +849,25 @@ async def test_controller_applies_llm_excluded_categories():
             for stop in day.stops:
                 searchable = " ".join([stop.poi.name, *stop.poi.types]).casefold()
                 assert "park" not in searchable
+
+
+@pytest.mark.asyncio
+async def test_planning_result_contains_single_map_ready_route():
+    service = PlanningService(candidate_limits=(30,))
+    user_id = uuid4()
+
+    await service.create_plans_for_user(user_id, llm_output_variants()[0])
+    result = service.get_result(user_id)
+
+    assert result is not None
+    assert result.status == "ready"
+    assert result.plan is not None
+    assert result.plan.strategy == "cheapest"
+    assert result.plan.stops
+    assert [stop.order for stop in result.plan.stops] == list(
+        range(1, len(result.plan.stops) + 1)
+    )
+    assert len(result.plan.legs) == max(0, len(result.plan.stops) - 1)
+    assert all(len(leg.coords) >= 2 for leg in result.plan.legs)
+    assert result.plan.summary.attractions_count == len(result.plan.stops)
+    json.loads(result.model_dump_json())

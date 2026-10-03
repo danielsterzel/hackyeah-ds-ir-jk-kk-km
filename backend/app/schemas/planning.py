@@ -294,8 +294,74 @@ class Plan(DomainModel):
     skipped_poi_ids: list[str] = Field(default_factory=list)
 
 
+class RouteWarning(DomainModel):
+    code: str
+    message: str
+    stop_id: str | None = None
+    leg_id: str | None = None
+
+
+class RoutePlace(DomainModel):
+    id: str
+    name: str
+    lat: float
+    lng: float
+    category: str | None = None
+    address: str | None = None
+
+
+class RouteStop(DomainModel):
+    id: str
+    order: int = Field(ge=1)
+    kind: Literal["start", "attraction", "end"]
+    place: RoutePlace
+    arrival_at: datetime
+    departure_at: datetime
+    visit_duration_min: int = Field(ge=0)
+    price_pln: float = Field(ge=0)
+    opens_at: datetime | None = None
+    closes_at: datetime | None = None
+    warnings: list[RouteWarning] = Field(default_factory=list)
+
+
+class RouteLeg(DomainModel):
+    id: str
+    from_stop_id: str
+    to_stop_id: str
+    mode: Literal["walk", "bus", "bike", "scooter", "taxi", "car"]
+    distance_m: int = Field(ge=0)
+    duration_min: int = Field(ge=0)
+    cost_pln: float = Field(ge=0)
+    coords: list[tuple[float, float]]
+
+
+class RouteSummary(DomainModel):
+    total_cost_pln: float = Field(ge=0)
+    total_duration_min: int = Field(ge=0)
+    total_distance_m: int = Field(ge=0)
+    total_walking_m: int = Field(ge=0)
+    attractions_count: int = Field(ge=0)
+    fits_time: bool
+    fits_budget: bool | None = None
+    time_over_min: int = Field(ge=0)
+    budget_over_pln: float | None = Field(default=None, ge=0)
+
+
+class RoutePlan(DomainModel):
+    strategy: Literal["cheapest", "fastest", "most_places", "least_crowded"]
+    solver_status: SolverStatus
+    objective_value: float | None = None
+    total_reward: float = 0.0
+    summary: RouteSummary
+    stops: list[RouteStop]
+    legs: list[RouteLeg]
+    warnings: list[RouteWarning] = Field(default_factory=list)
+    skipped_poi_ids: list[str] = Field(default_factory=list)
+
+
 class PlanningResultResponse(DomainModel):
     status: Literal["planning", "ready", "failed"]
+    plan: RoutePlan | None = None
     plans: list[Plan] | None = None
     llm_output: LLMOutput | None = None
     error: str | None = None

@@ -17,9 +17,11 @@ from app.schemas.planning import (
     PlanningConstraints,
     PlanningRequest,
     PlanningResultResponse,
+    RoutePlan,
     TravelMode,
 )
 from app.service.planning_json_poi_service import JsonPOIService
+from app.service.planning_mapper import RoutePlanMapper
 from app.service.planning_or_solver import OrToolsSolver
 from app.service.planning_poi_filter_service import PreferencePOIFilterService
 from app.service.planning_simple_connection_service import SimpleConnectionService
@@ -61,12 +63,14 @@ class PlanningService:
         self._candidate_limits = candidate_limits
         self._statuses: dict[UUID, str] = {}
         self._results: dict[UUID, list[Plan]] = {}
+        self._routes: dict[UUID, RoutePlan] = {}
         self._llm_outputs: dict[UUID, LLMOutput] = {}
         self._errors: dict[UUID, str] = {}
 
     def mark_planning(self, user_id: UUID) -> None:
         self._statuses[user_id] = "planning"
         self._results.pop(user_id, None)
+        self._routes.pop(user_id, None)
         self._llm_outputs.pop(user_id, None)
         self._errors.pop(user_id, None)
 
@@ -81,6 +85,7 @@ class PlanningService:
 
         return PlanningResultResponse(
             status=status,
+            plan=self._routes.get(user_id),
             plans=self._results.get(user_id),
             llm_output=self._llm_outputs.get(user_id),
             error=self._errors.get(user_id),
@@ -96,13 +101,63 @@ class PlanningService:
 
         try:
             plans = await self.create_plans(payload)
+            selected_plan = self._select_plan(plans, payload.optimization_strategy)
+            request = self._to_planning_request(payload)
+            route = RoutePlanMapper().to_route_plan(selected_plan, request)
+            if route is None:
+                raise NoFeasiblePlanError("Planner nie zwrócił trasy do wyświetlenia.")
         except Exception as exc:
             self.mark_failed(user_id, str(exc))
             raise
 
         self._results[user_id] = plans
+        self._routes[user_id] = route
         self._statuses[user_id] = "ready"
         return plans
+
+    @staticmethod
+    def _select_plan(plans: list[Plan], strategy: str) -> Plan:
+        def attractions_count(plan: Plan) -> int:
+            return sum(len(day.stops) for day in plan.days)
+
+        usable_plans = [plan for plan in plans if attractions_count(plan) > 0]
+        if not usable_plans:
+            raise NoFeasiblePlanError("Planner nie zwrócił wykonalnej trasy.")
+
+        if strategy == "cheapest":
+            return min(
+                usable_plans,
+                key=lambda plan: (
+                    plan.total_cost.money_minor,
+                    -attractions_count(plan),
+                    plan.total_cost.time_s,
+                ),
+            )
+        if strategy == "fastest":
+            return min(
+                usable_plans,
+                key=lambda plan: (
+                    plan.total_cost.time_s,
+                    -attractions_count(plan),
+                ),
+            )
+        if strategy == "most_places":
+            return max(
+                usable_plans,
+                key=lambda plan: (
+                    attractions_count(plan),
+                    plan.total_reward,
+                    -plan.total_cost.time_s,
+                ),
+            )
+        return max(
+            usable_plans,
+            key=lambda plan: (
+                plan.total_reward,
+                attractions_count(plan),
+                -plan.total_cost.time_s,
+            ),
+        )
 
     async def create_plans(self, payload: LLMOutput) -> list[Plan]:
         request = self._to_planning_request(payload)

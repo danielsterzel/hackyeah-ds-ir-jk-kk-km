@@ -18,8 +18,9 @@ const geistMono = Geist_Mono({
 });
 
 const montserrat = Montserrat({
-  subsets: ["latin"]
-})
+  subsets: ["latin"],
+});
+
 export const metadata: Metadata = {
   title: "VentureFlux",
   description: "Osobisty planer zwiedzania Krakowa",

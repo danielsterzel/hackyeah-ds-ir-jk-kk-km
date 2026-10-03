@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { TripMapLoader } from "@/components/map/TripMapLoader";
 import {
   Card,
   CardContent,
@@ -31,6 +32,7 @@ import {
 } from "@/components/ui/card";
 import { toast } from "@/components/ui/toast";
 import { BACKEND_URL } from "@/env";
+import type { RoutePlan } from "@/types/plan";
 
 type QuestionnaireResponse = {
   question?: string;
@@ -39,6 +41,7 @@ type QuestionnaireResponse = {
 
 type PlanningResultResponse = {
   status: "planning" | "ready" | "failed";
+  plan: RoutePlan | null;
   plans: unknown[] | null;
   llm_output: unknown | null;
   error: string | null;
@@ -63,7 +66,7 @@ const STRATEGIES = [
   {
     value: "cheapest",
     label: "Najtaniej",
-    description: "Pilnuj mojego budżetu",
+    description: "Minimalizuj koszt planu",
     icon: Coins,
   },
   {
@@ -175,79 +178,6 @@ function getOrCreateUserId(): string {
   window.localStorage.setItem(USER_ID_STORAGE_KEY, userId);
 
   return userId;
-}
-
-function getProposedAttractions(plans: unknown[] | null): unknown[] {
-  if (!plans) {
-    return [];
-  }
-
-  const seenPoiIds = new Set<string>();
-  const attractions = plans.flatMap((plan) => {
-    if (!plan || typeof plan !== "object" || !("days" in plan)) {
-      return [];
-    }
-
-    const days = (plan as { days?: unknown }).days;
-    if (!Array.isArray(days)) {
-      return [];
-    }
-
-    return days.flatMap((day) => {
-      if (!day || typeof day !== "object" || !("stops" in day)) {
-        return [];
-      }
-
-      const stops = (day as { stops?: unknown }).stops;
-      return Array.isArray(stops) ? stops : [];
-    });
-  });
-
-  return attractions.filter((attraction) => {
-    const poiId = getAttractionPoiId(attraction);
-
-    if (!poiId) {
-      return true;
-    }
-    if (seenPoiIds.has(poiId)) {
-      return false;
-    }
-
-    seenPoiIds.add(poiId);
-    return true;
-  });
-}
-
-function getAttractionPoiId(attraction: unknown): string | null {
-  if (!attraction || typeof attraction !== "object" || !("poi" in attraction)) {
-    return null;
-  }
-
-  const poi = (attraction as { poi?: unknown }).poi;
-  if (!poi || typeof poi !== "object" || !("id" in poi)) {
-    return null;
-  }
-
-  const id = (poi as { id?: unknown }).id;
-  return typeof id === "string" && id.length > 0 ? id : null;
-}
-
-function getAttractionName(attraction: unknown, index: number): string {
-  if (
-    attraction &&
-    typeof attraction === "object" &&
-    "poi" in attraction
-  ) {
-    const poi = (attraction as { poi?: unknown }).poi;
-    if (poi && typeof poi === "object" && "name" in poi) {
-      const name = (poi as { name?: unknown }).name;
-      if (typeof name === "string") {
-        return name;
-      }
-    }
-  }
-
-  return `Atrakcja ${index + 1}`;
 }
 
 export default function Home() {
@@ -396,7 +326,13 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="relative z-10 mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-8 sm:px-8 sm:py-12">
+      <section
+        className={`relative z-10 mx-auto flex w-full flex-1 px-4 py-8 sm:px-8 sm:py-12 ${
+          isFinished
+            ? "max-w-[1500px] items-start"
+            : "max-w-3xl items-center"
+        }`}
+      >
         {isFinished ? (
           <PlanningState
             answeredQuestions={answeredCount}
@@ -527,7 +463,7 @@ export default function Home() {
       </section>
 
       <footer className="relative z-10 px-6 py-6 text-center text-xs font-medium text-[#7890a2]">
-        Plan dopasowany do Twojego czasu, budżetu i tempa.
+        Plan dopasowany do Twoich zainteresowań, czasu i tempa.
       </footer>
     </main>
   );
@@ -711,51 +647,14 @@ function PlanningState({
   });
 
   if (planningResult.data?.status === "ready") {
-    const attractions = getProposedAttractions(planningResult.data.plans);
+    const plan = planningResult.data.plan;
 
-    return (
-      <Card className="w-full border border-white/80 bg-white/90 py-0 shadow-[0_24px_70px_rgba(63,143,177,0.16)] ring-1 ring-[#cdeaf6]/70 backdrop-blur">
-        <CardHeader className="border-b border-[#e4f2f8] px-6 py-6 text-left sm:px-9">
-          <div className="mb-2 inline-flex w-fit items-center gap-2 rounded-full bg-[#e8f8ff] px-3 py-1.5 text-xs font-bold text-[#128ec0]">
-            <Check className="size-3.5" aria-hidden="true" />
-            Plan gotowy
-          </div>
-          <CardTitle className="text-2xl font-extrabold text-[#17364d]">
-            Proponowane atrakcje
-          </CardTitle>
-          <CardDescription>
-            Tymczasowy podgląd pozycji zwróconych przez moduł planning.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5 p-4 sm:p-6">
-          {attractions.length > 0 ? (
-            <div className="space-y-4">
-              {attractions.map((attraction, index) => (
-                <article
-                  key={getAttractionPoiId(attraction) ?? index}
-                  className="overflow-hidden rounded-2xl border border-[#dcecf3] bg-white"
-                >
-                  <div className="flex items-center gap-3 border-b border-[#e4f2f8] px-4 py-3 text-left">
-                    <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#e8f8ff] text-sm font-bold text-[#128ec0]">
-                      {index + 1}
-                    </span>
-                    <h2 className="font-bold text-[#17364d]">
-                      {getAttractionName(attraction, index)}
-                    </h2>
-                  </div>
-                  <pre className="max-h-80 overflow-auto bg-[#102a3b] p-4 text-left text-xs leading-6 whitespace-pre text-[#d9f5ff]">
-                    {JSON.stringify(attraction, null, 2)}
-                  </pre>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <p className="rounded-2xl bg-[#f2faff] p-5 text-sm text-[#668094]">
-              Planner nie zwrócił żadnych atrakcji.
-            </p>
-          )}
+    if (plan) {
+      return (
+        <div className="w-full space-y-5">
+          <TripMapLoader plan={plan} />
 
-          <details className="overflow-hidden rounded-2xl border border-amber-200 bg-amber-50/70 text-left">
+          <details className="overflow-hidden rounded-2xl border border-amber-200 bg-amber-50/90 text-left">
             <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-amber-900">
               Debug: LLMOutput
             </summary>
@@ -764,7 +663,7 @@ function PlanningState({
             </pre>
           </details>
 
-          <details className="overflow-hidden rounded-2xl border border-[#dcecf3] text-left">
+          <details className="overflow-hidden rounded-2xl border border-[#dcecf3] bg-white/90 text-left">
             <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-[#35556c]">
               Debug: pełny output planera
             </summary>
@@ -772,6 +671,16 @@ function PlanningState({
               {JSON.stringify(planningResult.data.plans, null, 2)}
             </pre>
           </details>
+        </div>
+      );
+    }
+
+    return (
+      <Card className="w-full border border-red-100 bg-white/90 py-0 text-center shadow-[0_24px_70px_rgba(63,143,177,0.16)]">
+        <CardContent className="flex min-h-80 items-center justify-center px-7 py-12">
+          <p className="text-sm font-semibold text-[#668094]">
+            Planner zakończył pracę, ale nie zwrócił trasy do pokazania na mapie.
+          </p>
         </CardContent>
       </Card>
     );
