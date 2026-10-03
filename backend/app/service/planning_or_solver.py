@@ -61,8 +61,24 @@ class OrToolsSolver(ISolver):
         cost_m = [[0] * total for _ in range(total)]
         for i in range(total):
             for j in range(total):
-                if i == j or i == dummy or j == dummy:
+                if i == j or i == dummy:
                     continue                      # zero: pusta trasa / dojście do dummy
+                if j == dummy:
+                    # Przy trasie otwartej nie ma realnego węzła końcowego,
+                    # więc ostatnia wizyta musi zostać doliczona na łuku do
+                    # sztucznego węzła. Bez tego ograniczenia budżetowego
+                    # pomijały koszt ostatniego POI.
+                    visit = si.nodes[i].visit_cost
+                    time_m[i][j] = visit.time_s
+                    money_m[i][j] = visit.money_minor
+                    cost_m[i][j] = round(
+                        (
+                            w.time_weight * visit.time_s
+                            + w.money_weight * visit.money_minor
+                        )
+                        * SCALE
+                    )
+                    continue
                 if (i, j) == (start, end):
                     continue                      # bezpośredni start->end = pusta trasa
                 edge = edges.get((i, j))

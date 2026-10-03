@@ -143,7 +143,7 @@ def make_constraints(budget: float = 150.0, start=KRAKOW,
         days=extra.get("days", 1),
         travel_mode=extra.get("travel_mode", walking()),
         budget_per_route=OptionalCostVector(
-            time_s=int((end_at - start_at).total_seconds()),
+            time_s=max(1, round(budget * 100)),
             money_minor=round(budget * 100),
         ),
         weights=CostWeights(),
@@ -183,7 +183,9 @@ def make_solver_input(rewards: dict, visit_costs: dict, edges: dict,
         edges=solver_edges,
         num_routes=1,
         start_index=index_of[start],
-        budget_per_route=OptionalCostVector(time_s=round(budget * 100)),
+        budget_per_route=OptionalCostVector(
+            time_s=max(1, round(budget * 100)),
+        ),
         weights=CostWeights(),
     )
 
@@ -494,10 +496,10 @@ def _feasible(result, solver_input, rewards, visit_costs, edges, budget):
 
 
 def test_solver_picks_optimal_subset_under_budget(solver):
-    """Budżet 10. A(r=5,k=6), B(r=4,k=4), C(r=4,k=4), koszt przejść 0.
-    Optimum = B+C (reward 8, koszt 8), a NIE A (reward 5)."""
+    """Budżet 10. A(r=5,k=7), B(r=4,k=4), C(r=4,k=4), koszt przejść 0.
+    Optimum = B+C (reward 8, koszt 8), a nie A+B (koszt 11)."""
     rewards = {"s": 0, "A": 5, "B": 4, "C": 4}
-    visit = {"s": 0, "A": 6, "B": 4, "C": 4}
+    visit = {"s": 0, "A": 7, "B": 4, "C": 4}
     edges = {(a, b): 0 for a in rewards for b in rewards if a != b}
     si = make_solver_input(rewards, visit, edges, budget=10, start="s")
     res = solver.solve(si)
@@ -511,7 +513,7 @@ def test_solver_accounts_for_travel_cost(solver):
     razem z Y (r=3, k=1, dojście 1)."""
     rewards = {"s": 0, "X": 10, "Y": 3}
     visit = {"s": 0, "X": 2, "Y": 1}
-    edges = {("s", "X"): 9, ("s", "Y"): 1, ("X", "Y"): 1, ("Y", "X"): 1,
+    edges = {("s", "X"): 9, ("s", "Y"): 1, ("X", "Y"): 1,
              ("X", "s"): 9, ("Y", "s"): 1}
     si = make_solver_input(rewards, visit, edges, budget=10, start="s")
     res = solver.solve(si)
