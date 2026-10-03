@@ -2,8 +2,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.questionnaire import router as questionnaire_router
+from app.api.planning_controller import router as planning_router
 
 app = FastAPI()
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -14,6 +16,7 @@ app.add_middleware(
 )
 
 app.include_router(questionnaire_router)
+app.include_router(planning_router)
 
 
 @app.get("/")

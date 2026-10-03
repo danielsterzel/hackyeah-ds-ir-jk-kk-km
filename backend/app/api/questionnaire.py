@@ -8,7 +8,9 @@ from app.schemas.llm import (
     UserAnswer,
     UserInitQuestionnaire,
 )
+from app.schemas.planning import Plan
 from app.service.llm.questionnaire import OllamaService
+from app.service.planning_service import planning_service
 
 router = APIRouter(
     prefix="/questionnaire",
@@ -17,13 +19,16 @@ router = APIRouter(
 
 services: dict[UUID, OllamaService] = {}
 questionnaire_results: dict[UUID, LLMOutput] = {}
+planning_results: dict[UUID, list[Plan]] = {}
 
 
 async def finalize_questionnaire(
     user_id: UUID,
     service: OllamaService,
 ) -> None:
-    questionnaire_results[user_id] = await service.finalize()
+    llm_output = await service.finalize()
+    questionnaire_results[user_id] = llm_output
+    planning_results[user_id] = await planning_service.create_plans(llm_output)
 
 
 @router.post("/init", response_model=LLMQuestion)

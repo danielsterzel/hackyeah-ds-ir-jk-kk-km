@@ -37,7 +37,6 @@ TransportMode = Literal[
     "car",
 ]
 
-
 class Coordinates(ConfiguredSchema):
 
     latitude: float = Field(

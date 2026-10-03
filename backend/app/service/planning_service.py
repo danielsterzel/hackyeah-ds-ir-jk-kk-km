@@ -1,0 +1,209 @@
+"""Application service that turns normalized LLM preferences into trip plans."""
+
+from __future__ import annotations
+
+import asyncio
+from decimal import Decimal
+from pathlib import Path
+
+from app.schemas.llm import Coordinates as LLMCoordinates
+from app.schemas.llm import LLMOutput
+from app.schemas.planning import (
+    Coordinates,
+    CostWeights,
+    OptionalCostVector,
+    Plan,
+    PlanningConstraints,
+    PlanningRequest,
+    TravelMode,
+)
+from app.service.planning_json_poi_service import JsonPOIService
+from app.service.planning_or_solver import OrToolsSolver
+from app.service.planning_poi_filter_service import PreferencePOIFilterService
+from app.service.planning_simple_connection_service import SimpleConnectionService
+from app.service.planning_simple_solver_decoder import SimpleSolverDecoder
+from app.service.planning_simple_solver_encoder import SimpleSolverEncoder
+
+DEFAULT_DATASET_PATH = (
+    Path(__file__).parents[2]
+    / "resources"
+    / "dataset_crawler-google-places_2026-10-03_15-34-29-547.json"
+)
+
+
+class PlanningServiceError(Exception):
+    """Base error raised by the planning pipeline."""
+
+
+class NoPoisFoundError(PlanningServiceError):
+    """Raised when no points of interest are available for planning."""
+
+
+class NoFeasiblePlanError(PlanningServiceError):
+    """Raised when the solver cannot produce a feasible plan."""
+
+
+class UnsupportedTransportModeError(PlanningServiceError):
+    """Raised when an LLM transport mode cannot be mapped to the planner."""
+
+
+class PlanningService:
+    def __init__(
+        self,
+        dataset_path: Path = DEFAULT_DATASET_PATH,
+        search_radius_m: int = 25_000,
+        candidate_limits: tuple[int, ...] = (30, 60, 100),
+    ) -> None:
+        self._dataset_path = dataset_path
+        self._search_radius_m = search_radius_m
+        self._candidate_limits = candidate_limits
+
+    async def create_plans(self, payload: LLMOutput) -> list[Plan]:
+        request = self._to_planning_request(payload)
+        mode = self._select_travel_mode(request)
+        poi_service = JsonPOIService(self._dataset_path)
+
+        pois = await poi_service.get_pois(
+            query="",
+            center=request.start_location,
+            radius_m=self._search_radius_m,
+        )
+        if not pois:
+            raise NoPoisFoundError("Nie znaleziono POI w obszarze planowania.")
+
+        plans: list[Plan] = []
+        seen: set[str] = set()
+
+        for limit in self._candidate_limits:
+            filtered_pois = PreferencePOIFilterService(
+                max_results=limit,
+                max_distance_m=self._search_radius_m,
+            ).filter_pois(pois, request)
+            if not filtered_pois:
+                continue
+
+            constraints = self._to_constraints(request, mode)
+            connections = await SimpleConnectionService().get_connections(
+                filtered_pois,
+                mode,
+            )
+            solver_input = SimpleSolverEncoder().encode(
+                filtered_pois,
+                connections,
+                constraints,
+            )
+            result = await asyncio.to_thread(
+                OrToolsSolver(time_limit_s=5).solve,
+                solver_input,
+            )
+            plan = SimpleSolverDecoder().decode(
+                result,
+                solver_input,
+                filtered_pois,
+                connections,
+                constraints,
+            )
+
+            fingerprint = plan.model_dump_json()
+            if fingerprint in seen:
+                continue
+
+            seen.add(fingerprint)
+            plans.append(plan)
+            if len(plans) == 3:
+                break
+
+        if not plans:
+            raise NoFeasiblePlanError("Nie udało się utworzyć wykonalnego planu.")
+
+        return plans
+
+    def _to_planning_request(self, payload: LLMOutput) -> PlanningRequest:
+        return PlanningRequest(
+            start_at=payload.start_at,
+            end_at=payload.end_at,
+            start_location=self._coordinates(payload.start_location),
+            end_location=(
+                self._coordinates(payload.end_location)
+                if payload.end_location is not None
+                else None
+            ),
+            budget_pln=self._budget_for_strategy(payload.optimization_strategy),
+            preferred_categories=payload.preferred_categories,
+            food_preferences=payload.food_preferences,
+            transport_modes=[
+                self._parse_travel_mode(mode) for mode in payload.transport_modes
+            ],
+            prefer_walking="walking" in payload.transport_modes,
+            avoid_crowds=payload.avoid_crowds,
+            weather_sensitive=payload.weather_sensitive,
+            optimization_strategy=payload.optimization_strategy,
+            excluded_categories=payload.excluded_categories,
+        )
+
+    @staticmethod
+    def _budget_for_strategy(strategy: str) -> Decimal:
+        budgets = {
+            "cheapest": Decimal("50"),
+            "fastest": Decimal("150"),
+            "most_places": Decimal("300"),
+            "least_crowded": Decimal("150"),
+        }
+        return budgets[strategy]
+
+    @staticmethod
+    def _coordinates(value: LLMCoordinates) -> Coordinates:
+        return Coordinates(lat=value.latitude, lng=value.longitude)
+
+    @staticmethod
+    def _parse_travel_mode(value: str) -> TravelMode:
+        aliases = {
+            "walking": TravelMode.WALK,
+            "walk": TravelMode.WALK,
+            "bicycle": TravelMode.BICYCLE,
+            "cycling": TravelMode.BICYCLE,
+            "transit": TravelMode.TRANSIT,
+            "public_transport": TravelMode.TRANSIT,
+            "tram": TravelMode.TRANSIT,
+            "drive": TravelMode.DRIVE,
+            "driving": TravelMode.DRIVE,
+            "taxi": TravelMode.DRIVE,
+            "car": TravelMode.DRIVE,
+            "scooter": TravelMode.BICYCLE,
+        }
+        try:
+            return aliases[value.casefold().strip()]
+        except KeyError as exc:
+            raise UnsupportedTransportModeError(
+                f"Nieobsługiwany środek transportu: {value}"
+            ) from exc
+
+    @staticmethod
+    def _select_travel_mode(request: PlanningRequest) -> TravelMode:
+        if request.prefer_walking:
+            return TravelMode.WALK
+        if request.transport_modes:
+            return request.transport_modes[0]
+        return TravelMode.WALK
+
+    @staticmethod
+    def _to_constraints(
+        request: PlanningRequest,
+        mode: TravelMode,
+    ) -> PlanningConstraints:
+        duration_s = max(1, round((request.end_at - request.start_at).total_seconds()))
+        budget_minor = max(0, int(request.budget_pln * Decimal("100")))
+        return PlanningConstraints(
+            days=1,
+            travel_mode=mode,
+            budget_per_route=OptionalCostVector(
+                time_s=duration_s,
+                money_minor=budget_minor,
+            ),
+            weights=CostWeights(),
+            day_start=request.start_at.time(),
+            plan_date=request.start_at,
+        )
+
+
+planning_service = PlanningService()
