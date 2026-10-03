@@ -1,4 +1,4 @@
- """
+"""
 Testy kontraktowe pipeline'u: POIService -> ConnectionService -> Encoder
 -> Solver -> Decoder -> Mapper.
 
