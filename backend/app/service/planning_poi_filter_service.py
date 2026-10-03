@@ -61,6 +61,8 @@ class PreferencePOIFilterService(IPOIFilterService):
             distance = self._distance_from_request(poi, request)
             if self._max_distance_m is not None and distance > self._max_distance_m:
                 continue
+            if self._matches_category(poi, request.excluded_categories):
+                continue
             if not self._is_visitable_in_range(poi, request.start_at, request.end_at):
                 continue
 
@@ -112,6 +114,11 @@ class PreferencePOIFilterService(IPOIFilterService):
         )
         return preferred, food_match
 
+    @staticmethod
+    def _matches_category(poi: POI, categories: Sequence[str]) -> bool:
+        searchable = " ".join([poi.name, *poi.types]).casefold()
+        return any(category.casefold() in searchable for category in categories)
+
     def _with_adjusted_reward(
         self,
         poi: POI,
@@ -153,6 +160,10 @@ class PreferencePOIFilterService(IPOIFilterService):
         if not poi.opening_hours:
             return True
 
+        # OpeningPeriod stores local wall-clock times without timezone
+        # information. Compare them with the request's local wall-clock range.
+        start_at = start_at.replace(tzinfo=None)
+        end_at = end_at.replace(tzinfo=None)
         current_date = start_at.date()
         last_date = end_at.date()
         while current_date <= last_date:

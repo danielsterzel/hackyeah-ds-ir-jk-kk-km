@@ -133,7 +133,8 @@ class PlanningRequest(DomainModel):
     prefer_walking: bool = False
     avoid_crowds: bool = False
     weather_sensitive: bool = False
-    optimization_strategy: bool = False
+    optimization_strategy: str = "most_places"
+    excluded_categories: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _validate_time_range(self) -> PlanningRequest:
