@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime, time, timedelta
+from decimal import Decimal
 from enum import Enum
 from typing import Sequence
 
@@ -107,6 +108,38 @@ class POI(DomainModel):
         default_factory=lambda: CostVector(time_s=3600),
         description="Koszt samej wizyty (czas zwiedzania, bilet wstępu)",
     )
+
+
+# --------------------------------------------------------------------------- #
+# Wejście planowania i filtrowania POI
+# --------------------------------------------------------------------------- #
+class PlanningRequest(DomainModel):
+    """
+    Stabilny kontrakt domenowy dla planowania tras.
+
+    Jest celowo niezależny od schematu odpowiedzi LLM. Adapter LLM może
+    mapować swoje pola do tego modelu, a późniejsza zmiana kontraktu LLM nie
+    wymaga zmiany serwisów domenowych.
+    """
+
+    start_at: datetime
+    end_at: datetime
+    start_location: Coordinates
+    end_location: Coordinates | None = None
+    budget_pln: Decimal = Field(ge=0)
+    preferred_categories: list[str] = Field(default_factory=list)
+    food_preferences: list[str] = Field(default_factory=list)
+    transport_modes: list[TravelMode] = Field(default_factory=list)
+    prefer_walking: bool = False
+    avoid_crowds: bool = False
+    weather_sensitive: bool = False
+    optimization_strategy: bool = False
+
+    @model_validator(mode="after")
+    def _validate_time_range(self) -> PlanningRequest:
+        if self.end_at <= self.start_at:
+            raise ValueError("end_at musi być późniejsze niż start_at")
+        return self
 
 
 # --------------------------------------------------------------------------- #
@@ -281,6 +314,22 @@ class PlotterPayload(DomainModel):
 class IPOIService(ABC):
     @abstractmethod
     async def get_pois(self, query: str, center: Coordinates, radius_m: int) -> list[POI]: ...
+
+
+class IPOIFilterService(ABC):
+    """
+    Filtruje wynik IPOIService według domenowych preferencji planowania.
+
+    Pobieranie danych pozostaje odpowiedzialnością IPOIService; ten interfejs
+    nie wykonuje zapytań sieciowych i działa na już pobranej kolekcji POI.
+    """
+
+    @abstractmethod
+    def filter_pois(
+        self,
+        pois: Sequence[POI],
+        request: PlanningRequest,
+    ) -> list[POI]: ...
 
 
 class IPOIConnectionService(ABC):
