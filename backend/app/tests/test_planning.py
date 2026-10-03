@@ -16,15 +16,19 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).parents[2]))
+
 # =========================================================================== #
 # ADAPTER  -- modele i implementacje domenowe używane przez testy
 # =========================================================================== #
 
+from api.planning_controller import create_plans
 from service.planning_json_poi_service import JsonPOIService
 from service.planning_mapper import SimplePlanningMapper
 from service.planning_or_solver import OrToolsSolver
@@ -47,6 +51,7 @@ from schemas.planning import (
     SolverResult,
     TravelMode,
 )
+from schemas.llm import LLMOutput
 
 
 # ---- fixture'y implementacji ---------------------------------------------- #
@@ -723,3 +728,92 @@ async def test_pipeline_does_not_mutate_inputs(poi_service, connection_service,
     si = encoder.encode(pois, conns, c)
     decoder.decode(solver.solve(si), si, pois, conns, c)
     assert (repr(pois), repr(conns)) == before 
+
+
+# =========================================================================== #
+# 8. Pipeline przez kontroler z różnymi odpowiedziami LLM
+# =========================================================================== #
+
+def llm_output_variants() -> list[LLMOutput]:
+    common = {
+        "start_at": "2026-10-03T10:00:00+02:00",
+        "end_at": "2026-10-03T17:00:00+02:00",
+        "start_location": {
+            "latitude": KRAKOW[0],
+            "longitude": KRAKOW[1],
+        },
+        "end_location": None,
+        "food_preferences": [],
+        "avoid_crowds": False,
+        "weather_sensitive": False,
+    }
+    return [
+        LLMOutput(
+            **common,
+            preferred_categories=["museum", "historic"],
+            transport_modes=["walking"],
+            optimization_strategy="cheapest",
+            excluded_categories=["shopping", "nightlife"],
+        ),
+        LLMOutput(
+            **common,
+            preferred_categories=["museum"],
+            transport_modes=["public_transport", "walking"],
+            optimization_strategy="fastest",
+            excluded_categories=[],
+        ),
+        LLMOutput(
+            **common,
+            preferred_categories=["museum", "park", "historic"],
+            transport_modes=["walking", "public_transport"],
+            optimization_strategy="most_places",
+            excluded_categories=["shopping"],
+        ),
+        LLMOutput(
+            **{**common, "avoid_crowds": True},
+            preferred_categories=["park", "nature"],
+            transport_modes=["walking"],
+            optimization_strategy="least_crowded",
+            excluded_categories=["nightlife", "entertainment"],
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    llm_output_variants(),
+    ids=["cheapest", "fastest", "most-places", "least-crowded"],
+)
+async def test_controller_runs_pipeline_for_llm_output(payload):
+    plans = await create_plans(payload)
+
+    assert 1 <= len(plans) <= 3
+    for plan in plans:
+        assert plan.status in {"optimal", "feasible"}
+        assert plan.total_reward >= 0
+        assert plan.total_cost.time_s >= 0
+        assert plan.days
+        stops = [
+            stop
+            for day in plan.days
+            for stop in day.stops
+        ]
+        assert len({stop.poi.id for stop in stops}) == len(stops)
+        assert all(stop.arrival <= stop.departure for stop in stops)
+
+
+@pytest.mark.asyncio
+async def test_controller_applies_llm_excluded_categories():
+    payload = llm_output_variants()[2].model_copy(
+        update={"excluded_categories": ["park", "shopping", "nightlife"]}
+    )
+
+    plans = await create_plans(payload)
+    for plan in plans:
+        for day in plan.days:
+            for stop in day.stops:
+                searchable = " ".join(
+                    [stop.poi.name, *stop.poi.types]
+                ).casefold()
+                assert "park" not in searchable
