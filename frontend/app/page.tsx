@@ -1,734 +1,270 @@
-"use client";
-
-import {
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-  type KeyboardEvent,
-} from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import Link from "next/link";
 import {
   ArrowRight,
   Check,
-  Coins,
-  Gauge,
-  LandPlot,
-  LoaderCircle,
-  MapPinned,
-  Navigation,
+  Clock3,
+  Coffee,
+  Footprints,
+  Map,
+  MapPin,
+  Route,
+  SlidersHorizontal,
   Sparkles,
-  UsersRound,
+  Ticket,
 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { TripMapLoader } from "@/components/map/TripMapLoader";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { toast } from "@/components/ui/toast";
-import { BACKEND_URL } from "@/env";
-import type { RoutePlan } from "@/types/plan";
+import { SiteFooter } from "@/components/site/SiteFooter";
+import { SiteHeader } from "@/components/site/SiteHeader";
 
-type QuestionnaireResponse = {
-  question?: string;
-  done: boolean;
-};
-
-type PlanningResultResponse = {
-  status: "planning" | "ready" | "failed";
-  plan: RoutePlan | null;
-  plans: unknown[] | null;
-  llm_output: unknown | null;
-  error: string | null;
-};
-
-type OptimizationStrategy =
-  | "cheapest"
-  | "fastest"
-  | "most_places"
-  | "least_crowded";
-
-type InitQuestionnaireRequest = {
-  id: string;
-  latitude: number;
-  longitude: number;
-  optimizationStrategy: OptimizationStrategy;
-};
-
-const USER_ID_STORAGE_KEY = "trip-planner-user-id";
-
-const STRATEGIES = [
+const steps = [
   {
-    value: "cheapest",
-    label: "Najtaniej",
-    description: "Minimalizuj koszt planu",
-    icon: Coins,
+    number: "01",
+    icon: SlidersHorizontal,
+    title: "Powiedz, czego szukasz",
+    description:
+      "Wybierz tempo, budżet i opowiedz nam krótko o swoich zainteresowaniach.",
   },
   {
-    value: "fastest",
-    label: "Najszybciej",
-    description: "Ogranicz czas przejazdów",
-    icon: Gauge,
+    number: "02",
+    icon: Sparkles,
+    title: "Daj nam chwilę",
+    description:
+      "Łączymy miejsca, godziny otwarcia i dojazdy w jedną sensowną trasę.",
   },
   {
-    value: "most_places",
-    label: "Najwięcej miejsc",
-    description: "Wypełnij dzień atrakcjami",
-    icon: LandPlot,
+    number: "03",
+    icon: Route,
+    title: "Ruszaj w miasto",
+    description:
+      "Dostajesz gotowy plan na mapie — z czasem, kosztem i kolejnością przystanków.",
+  },
+];
+
+const benefits = [
+  {
+    icon: Clock3,
+    title: "Bez straty czasu",
+    text: "Plan, który naprawdę mieści się w Twoim dniu.",
   },
   {
-    value: "least_crowded",
-    label: "Bez tłumów",
-    description: "Wybieraj spokojniejsze miejsca",
-    icon: UsersRound,
+    icon: Ticket,
+    title: "Budżet pod kontrolą",
+    text: "Koszty biletów i przejazdów w jednym miejscu.",
   },
-] as const;
+  {
+    icon: Footprints,
+    title: "Trasa, nie lista",
+    text: "Kolejność miejsc dopasowana do poruszania się po mieście.",
+  },
+];
 
-async function postQuestionnaire<TBody>(
-  path: string,
-  body: TBody,
-): Promise<QuestionnaireResponse> {
-  const response = await fetch(`${BACKEND_URL}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    let message = "Nie udało się połączyć z planerem.";
-
-    try {
-      const errorBody = (await response.json()) as {
-        detail?: unknown;
-        message?: unknown;
-      };
-
-      if (typeof errorBody.message === "string") {
-        message = errorBody.message;
-      } else if (typeof errorBody.detail === "string") {
-        message = errorBody.detail;
-      }
-    } catch {
-      // Keep the generic message when the backend does not return JSON.
-    }
-
-    throw new Error(message);
-  }
-
-  if (response.status === 204) {
-    return { done: true };
-  }
-
-  const data = (await response.json()) as Partial<QuestionnaireResponse>;
-
-  return {
-    question: data.question,
-    done: data.done ?? false,
-  };
-}
-
-async function getPlanningResult(
-  userId: string,
-): Promise<PlanningResultResponse> {
-  const response = await fetch(`${BACKEND_URL}/planning/${userId}`, {
-    credentials: "include",
-  });
-
-  if (!response.ok) {
-    throw new Error("Nie udało się pobrać wyniku planowania.");
-  }
-
-  return response.json() as Promise<PlanningResultResponse>;
-}
-
-function getCurrentCoordinates(): Promise<GeolocationCoordinates> {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error("Ta przeglądarka nie obsługuje lokalizacji."));
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => resolve(position.coords),
-      () =>
-        reject(
-          new Error(
-            "Nie udało się pobrać lokalizacji. Zezwól na dostęp i spróbuj ponownie.",
-          ),
-        ),
-      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
-    );
-  });
-}
-
-function getOrCreateUserId(): string {
-  const storedUserId = window.localStorage.getItem(USER_ID_STORAGE_KEY);
-
-  if (storedUserId) {
-    return storedUserId;
-  }
-
-  const userId = crypto.randomUUID();
-  window.localStorage.setItem(USER_ID_STORAGE_KEY, userId);
-
-  return userId;
-}
-
-export default function Home() {
-  const [question, setQuestion] = useState<string | null>(null);
-  const [answer, setAnswer] = useState("");
-  const [strategy, setStrategy] =
-    useState<OptimizationStrategy>("cheapest");
-  const [answeredCount, setAnsweredCount] = useState(0);
-  const [isLocating, setIsLocating] = useState(false);
-  const [isFinished, setIsFinished] = useState(false);
-  const [userId, setUserId] = useState<string | null>(null);
-  const answerField = useRef<HTMLTextAreaElement>(null);
-
-  const showError = (error: Error) => {
-    toast.add({
-      title: "Coś poszło nie tak",
-      description: error.message,
-      type: "error",
-      priority: "high",
-    });
-  };
-
-  const initQuestionnaire = useMutation({
-    mutationFn: (payload: InitQuestionnaireRequest) =>
-      postQuestionnaire("/questionnaire/init", payload),
-    onSuccess: (data) => {
-      if (data.done) {
-        setIsFinished(true);
-        return;
-      }
-
-      if (!data.question) {
-        showError(new Error("Backend nie zwrócił pierwszego pytania."));
-        return;
-      }
-
-      setQuestion(data.question);
-    },
-    onError: showError,
-  });
-
-  const submitAnswer = useMutation({
-    mutationFn: (value: string) => {
-      const currentUserId = getOrCreateUserId();
-      setUserId(currentUserId);
-
-      return postQuestionnaire("/questionnaire/answer", {
-        id: currentUserId,
-        answer: value,
-      });
-    },
-    onSuccess: (data) => {
-      setAnsweredCount((current) => current + 1);
-      setAnswer("");
-
-      if (data.done) {
-        setIsFinished(true);
-        return;
-      }
-
-      if (!data.question) {
-        showError(new Error("Backend nie zwrócił kolejnego pytania."));
-        return;
-      }
-
-      setQuestion(data.question);
-    },
-    onError: showError,
-  });
-
-  useEffect(() => {
-    if (question && !submitAnswer.isPending) {
-      answerField.current?.focus();
-    }
-  }, [question, submitAnswer.isPending]);
-
-  const handleStart = async () => {
-    setIsLocating(true);
-
-    try {
-      const coordinates = await getCurrentCoordinates();
-      const currentUserId = getOrCreateUserId();
-      setUserId(currentUserId);
-
-      initQuestionnaire.mutate(
-        {
-          id: currentUserId,
-          latitude: coordinates.latitude,
-          longitude: coordinates.longitude,
-          optimizationStrategy: strategy,
-        },
-        { onSettled: () => setIsLocating(false) },
-      );
-    } catch (error) {
-      setIsLocating(false);
-      showError(
-        error instanceof Error
-          ? error
-          : new Error("Nie udało się pobrać lokalizacji."),
-      );
-    }
-  };
-
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const trimmedAnswer = answer.trim();
-
-    if (trimmedAnswer && !submitAnswer.isPending) {
-      submitAnswer.mutate(trimmedAnswer);
-    }
-  };
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      event.currentTarget.form?.requestSubmit();
-    }
-  };
-
-  const isStarting = (isLocating || initQuestionnaire.isPending) && !question;
-
+export default function LandingPage() {
   return (
-    <main className="relative flex min-h-screen flex-col overflow-hidden bg-[#f3fbff] text-[#153047]">
-      <div className="pointer-events-none absolute -top-32 -left-28 size-80 rounded-full bg-[#7ee2ff]/35 blur-3xl" />
-      <div className="pointer-events-none absolute top-1/3 -right-32 size-96 rounded-full bg-[#b4f0ff]/45 blur-3xl" />
-      <div className="pointer-events-none absolute right-1/4 -bottom-44 size-80 rounded-full bg-[#8ddcff]/25 blur-3xl" />
+    <main className="min-h-screen overflow-hidden bg-[#f3fbff] text-[#17364d]">
+      <div className="relative">
+        <div className="pointer-events-none absolute -top-28 -left-40 size-[30rem] rounded-full bg-[#75ddff]/30 blur-3xl" />
+        <div className="pointer-events-none absolute top-20 -right-52 size-[34rem] rounded-full bg-[#b8efff]/55 blur-3xl" />
+        <SiteHeader active="landing" />
 
-      <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between px-5 py-6 sm:px-8">
-        <div className="flex items-center gap-3">
-          <div className="flex size-11 items-center justify-center rounded-2xl bg-[#2db9ee] text-white shadow-[0_8px_24px_rgba(45,185,238,0.3)]">
-            <Navigation className="size-5 fill-current" aria-hidden="true" />
-          </div>
-          <div>
-            <p className="text-lg font-extrabold tracking-[-0.03em]">
-              VentureFlux
+        <section className="relative z-10 mx-auto grid w-full max-w-7xl items-center gap-14 px-5 pt-14 pb-24 sm:px-8 sm:pt-20 lg:grid-cols-[1.02fr_0.98fr] lg:px-10 lg:pt-24 lg:pb-32">
+          <div className="max-w-2xl">
+            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#c9eaf6] bg-white/80 px-4 py-2 text-xs font-extrabold tracking-wide text-[#158fbe] shadow-sm backdrop-blur">
+              <Sparkles className="size-4" aria-hidden="true" />
+              KRAKÓW W TWOIM RYTMIE
+            </div>
+            <h1 className="text-5xl leading-[1.02] font-extrabold tracking-[-0.055em] text-[#153047] sm:text-6xl lg:text-7xl">
+              Miasto ma tysiąc dróg.
+              <span className="relative mt-2 block text-[#2db9ee]">
+                Ty potrzebujesz jednej.
+                <svg
+                  viewBox="0 0 420 18"
+                  className="absolute -bottom-4 left-0 h-4 w-full max-w-[420px] text-[#86ddf8]"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M3 12C93 2 260 2 417 9"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="6"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </span>
+            </h1>
+            <p className="mt-9 max-w-xl text-lg leading-8 text-[#5c778b] sm:text-xl">
+              VentureFlux zamienia Twoje zainteresowania, czas i budżet w gotowy plan zwiedzania Krakowa — bez godzin spędzonych nad mapą.
             </p>
-            <p className="text-xs font-medium text-[#668094]">
-              Twój miejski kompan
-            </p>
-          </div>
-        </div>
-
-        <div className="hidden items-center gap-2 rounded-full border border-[#d7eef8] bg-white/75 px-4 py-2 text-xs font-semibold text-[#527187] shadow-sm backdrop-blur sm:flex">
-          <MapPinned className="size-4 text-[#21aee5]" aria-hidden="true" />
-          Kraków
-        </div>
-      </header>
-
-      <section
-        className={`relative z-10 mx-auto flex w-full flex-1 px-4 py-8 sm:px-8 sm:py-12 ${
-          isFinished
-            ? "max-w-[1500px] items-start"
-            : "max-w-3xl items-center"
-        }`}
-      >
-        {isFinished ? (
-          <PlanningState
-            answeredQuestions={answeredCount}
-            userId={userId}
-          />
-        ) : (
-          <Card className="w-full border border-white/80 bg-white/90 py-0 shadow-[0_24px_70px_rgba(63,143,177,0.16)] ring-1 ring-[#cdeaf6]/70 backdrop-blur">
-            <CardHeader className="gap-4 border-b border-[#e4f2f8] px-6 py-6 sm:px-9 sm:py-8">
-              <div className="flex items-center justify-between gap-4">
-                <div className="inline-flex items-center gap-2 rounded-full bg-[#e8f8ff] px-3 py-1.5 text-xs font-bold text-[#128ec0]">
-                  <Sparkles className="size-3.5" aria-hidden="true" />
-                  Dopasujmy Twój dzień
-                </div>
-                <span className="text-xs font-semibold text-[#7890a2]">
-                  {question ? `Pytanie ${answeredCount + 1}` : "Zaczynamy"}
+            <div className="mt-9 flex flex-col gap-3 sm:flex-row">
+              <Link
+                href="/planner"
+                className="group inline-flex h-14 items-center justify-center gap-2 rounded-full bg-[#2db9ee] px-7 text-base font-extrabold text-white shadow-[0_14px_34px_rgba(45,185,238,0.3)] transition hover:-translate-y-0.5 hover:bg-[#169fd5] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#2db9ee]/25"
+              >
+                Ułóż mój dzień
+                <ArrowRight className="size-5 transition group-hover:translate-x-1" aria-hidden="true" />
+              </Link>
+              <Link
+                href="/home"
+                className="inline-flex h-14 items-center justify-center rounded-full border border-[#c8e3ee] bg-white/80 px-7 text-base font-extrabold text-[#35556c] shadow-sm transition hover:border-[#8ed5ee] hover:bg-white focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#2db9ee]/20"
+              >
+                Zobacz aplikację
+              </Link>
+            </div>
+            <div className="mt-8 flex flex-wrap gap-x-6 gap-y-3 text-sm font-semibold text-[#668094]">
+              {["Plan w kilka minut", "Dopasowany budżet", "Gotowa mapa trasy"].map((item) => (
+                <span key={item} className="flex items-center gap-2">
+                  <span className="flex size-5 items-center justify-center rounded-full bg-[#dff6fe] text-[#1aa6da]">
+                    <Check className="size-3" aria-hidden="true" />
+                  </span>
+                  {item}
                 </span>
+              ))}
+            </div>
+          </div>
+
+          <HeroRouteCard />
+        </section>
+      </div>
+
+      <section className="relative z-10 border-y border-[#dceef6] bg-white/70">
+        <div className="mx-auto grid w-full max-w-7xl grid-cols-1 gap-px px-5 sm:grid-cols-3 sm:px-8 lg:px-10">
+          {benefits.map(({ icon: Icon, title, text }) => (
+            <div key={title} className="flex items-start gap-4 px-2 py-8 sm:px-6 lg:px-10">
+              <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-[#e4f7fe] text-[#1da9de]">
+                <Icon className="size-5" aria-hidden="true" />
+              </span>
+              <div>
+                <h2 className="font-extrabold text-[#214158]">{title}</h2>
+                <p className="mt-1 text-sm leading-6 text-[#71899a]">{text}</p>
               </div>
-
-              <div className="flex gap-1.5" aria-hidden="true">
-                {Array.from({ length: Math.max(4, answeredCount + 1) }).map(
-                  (_, index) => (
-                    <span
-                      key={index}
-                      className={`h-1.5 flex-1 rounded-full transition-colors ${
-                        index <= answeredCount
-                          ? "bg-[#31b9ed]"
-                          : "bg-[#e1f1f7]"
-                      }`}
-                    />
-                  ),
-                )}
-              </div>
-            </CardHeader>
-
-            <CardContent className="px-6 py-7 sm:px-9 sm:py-9">
-              {isStarting ? (
-                <QuestionLoading
-                  label={
-                    isLocating
-                      ? "Pobieram Twoją lokalizację…"
-                      : "Przygotowuję pierwsze pytanie…"
-                  }
-                />
-              ) : question ? (
-                <form onSubmit={handleSubmit} className="space-y-7">
-                  <div className="space-y-3" aria-live="polite">
-                    <CardDescription className="font-semibold tracking-wide text-[#6f899c] uppercase">
-                      Opowiedz nam trochę o sobie
-                    </CardDescription>
-                    <TypingQuestion key={question} question={question} />
-                  </div>
-
-                  <div className="space-y-2.5">
-                    <label
-                      htmlFor="questionnaire-answer"
-                      className="text-sm font-bold text-[#35556c]"
-                    >
-                      Twoja odpowiedź
-                    </label>
-                    <textarea
-                      ref={answerField}
-                      id="questionnaire-answer"
-                      value={answer}
-                      onChange={(event) => setAnswer(event.target.value)}
-                      onKeyDown={handleKeyDown}
-                      disabled={submitAnswer.isPending}
-                      rows={4}
-                      maxLength={800}
-                      placeholder="Np. muzea, zabytki i dobra kawa…"
-                      className="min-h-32 w-full resize-none rounded-3xl border border-[#cfe8f3] bg-[#f9fdff] px-5 py-4 text-base leading-7 text-[#17364d] shadow-inner outline-none transition placeholder:text-[#91a7b5] focus:border-[#31b9ed] focus:ring-4 focus:ring-[#31b9ed]/15 disabled:cursor-not-allowed disabled:opacity-65"
-                    />
-                    <p className="text-xs text-[#8299a8]">
-                      Enter wysyła · Shift + Enter dodaje nową linię
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col-reverse items-stretch justify-between gap-4 sm:flex-row sm:items-center">
-                    <p className="flex items-center gap-2 text-xs font-medium text-[#7890a2]">
-                      <span className="flex size-5 items-center justify-center rounded-full bg-[#e5f7fe] text-[#199ed2]">
-                        <Check className="size-3" aria-hidden="true" />
-                      </span>
-                      Odpowiedź trafia bezpośrednio do planera
-                    </p>
-                    <Button
-                      type="submit"
-                      size="lg"
-                      disabled={!answer.trim() || submitAnswer.isPending}
-                      className="h-12 bg-[#2db9ee] px-6 text-base font-bold text-white shadow-[0_10px_28px_rgba(45,185,238,0.28)] hover:bg-[#159fd5]"
-                    >
-                      {submitAnswer.isPending ? (
-                        <>
-                          <LoaderCircle className="animate-spin" aria-hidden="true" />
-                          Chwileczkę…
-                        </>
-                      ) : (
-                        <>
-                          Dalej
-                          <ArrowRight data-icon="inline-end" aria-hidden="true" />
-                        </>
-                      )}
-                    </Button>
-                  </div>
-
-                  {submitAnswer.isPending && (
-                    <p
-                      className="flex items-center justify-center gap-2 text-sm font-medium text-[#5f7d91]"
-                      role="status"
-                    >
-                      <LoaderCircle
-                        className="size-4 animate-spin text-[#23ace2]"
-                        aria-hidden="true"
-                      />
-                      Dobieram kolejne pytanie…
-                    </p>
-                  )}
-                </form>
-              ) : (
-                <SetupStep
-                  strategy={strategy}
-                  onStrategyChange={setStrategy}
-                  onStart={handleStart}
-                  isRetry={initQuestionnaire.isError}
-                />
-              )}
-            </CardContent>
-          </Card>
-        )}
+            </div>
+          ))}
+        </div>
       </section>
 
-      <footer className="relative z-10 px-6 py-6 text-center text-xs font-medium text-[#7890a2]">
-        Plan dopasowany do Twoich zainteresowań, czasu i tempa.
-      </footer>
+      <section className="mx-auto w-full max-w-7xl px-5 py-24 sm:px-8 lg:px-10 lg:py-32">
+        <div className="mx-auto max-w-2xl text-center">
+          <p className="text-xs font-extrabold tracking-[0.2em] text-[#1799cb] uppercase">Jak to działa</p>
+          <h2 className="mt-4 text-3xl font-extrabold tracking-[-0.04em] text-[#17364d] sm:text-5xl">
+            Od pomysłu do gotowej trasy
+          </h2>
+          <p className="mt-4 text-base leading-7 text-[#668094]">
+            Ty wybierasz kierunek. My zajmujemy się całą logistyką.
+          </p>
+        </div>
+        <div className="mt-14 grid gap-5 lg:grid-cols-3">
+          {steps.map(({ number, icon: Icon, title, description }) => (
+            <article
+              key={number}
+              className="group relative overflow-hidden rounded-[2rem] border border-white bg-white/90 p-7 shadow-[0_18px_50px_rgba(63,143,177,0.10)] transition hover:-translate-y-1 hover:shadow-[0_24px_60px_rgba(63,143,177,0.16)] sm:p-8"
+            >
+              <span className="absolute top-4 right-6 text-6xl font-black tracking-[-0.08em] text-[#edf8fc]">{number}</span>
+              <span className="relative flex size-13 items-center justify-center rounded-2xl bg-[#2db9ee] text-white shadow-[0_10px_26px_rgba(45,185,238,0.24)]">
+                <Icon className="size-6" aria-hidden="true" />
+              </span>
+              <h3 className="relative mt-7 text-xl font-extrabold tracking-[-0.025em]">{title}</h3>
+              <p className="relative mt-3 text-sm leading-7 text-[#668094]">{description}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="px-5 pb-24 sm:px-8 lg:px-10 lg:pb-32">
+        <div className="relative mx-auto max-w-7xl overflow-hidden rounded-[2.5rem] bg-[#17364d] px-7 py-14 text-white shadow-[0_30px_80px_rgba(23,54,77,0.2)] sm:px-12 lg:flex lg:items-center lg:justify-between lg:px-16 lg:py-16">
+          <div className="pointer-events-none absolute -top-28 -right-24 size-72 rounded-full border-[40px] border-[#2db9ee]/15" />
+          <div className="relative max-w-2xl">
+            <p className="text-xs font-extrabold tracking-[0.18em] text-[#79dfff] uppercase">Kraków czeka</p>
+            <h2 className="mt-3 text-3xl font-extrabold tracking-[-0.04em] sm:text-4xl">
+              Jeden dzień. Plan, który do Ciebie pasuje.
+            </h2>
+            <p className="mt-4 leading-7 text-[#bdd0dc]">Zacznij od kilku prostych pytań, a resztę ułożymy za Ciebie.</p>
+          </div>
+          <Link
+            href="/planner"
+            className="group relative mt-8 inline-flex h-14 shrink-0 items-center justify-center gap-2 rounded-full bg-white px-7 font-extrabold text-[#17364d] transition hover:-translate-y-0.5 hover:bg-[#e8f8ff] lg:mt-0"
+          >
+            Rozpocznij planowanie
+            <ArrowRight className="size-5 transition group-hover:translate-x-1" aria-hidden="true" />
+          </Link>
+        </div>
+      </section>
+
+      <SiteFooter />
     </main>
   );
 }
 
-function SetupStep({
-  strategy,
-  onStrategyChange,
-  onStart,
-  isRetry,
-}: {
-  strategy: OptimizationStrategy;
-  onStrategyChange: (strategy: OptimizationStrategy) => void;
-  onStart: () => void;
-  isRetry: boolean;
-}) {
+function HeroRouteCard() {
+  const stops = [
+    { time: "10:00", title: "Rynek Główny", icon: MapPin, tone: "bg-[#dff6fe] text-[#159dcc]" },
+    { time: "12:15", title: "Kazimierz", icon: Coffee, tone: "bg-[#fff3d8] text-[#ca7a12]" },
+    { time: "15:30", title: "Wawel", icon: Map, tone: "bg-[#e5f7ea] text-[#278556]" },
+  ];
+
   return (
-    <form
-      onSubmit={(event) => {
-        event.preventDefault();
-        onStart();
-      }}
-      className="space-y-7"
-    >
-      <div className="space-y-2">
-        <CardDescription className="font-semibold tracking-wide text-[#6f899c] uppercase">
-          Zanim zaczniemy
-        </CardDescription>
-        <CardTitle className="text-2xl leading-tight font-extrabold tracking-[-0.035em] text-[#17364d] sm:text-3xl">
-          Jaki rytm ma mieć Twoja przygoda?
-        </CardTitle>
-        <p className="max-w-xl text-sm leading-6 text-[#668094]">
-          Wybierz priorytet. O aktualną lokalizację poprosimy dopiero po
-          kliknięciu przycisku.
-        </p>
+    <div className="relative mx-auto w-full max-w-xl lg:ml-auto">
+      <div className="absolute -top-8 -right-6 hidden rounded-2xl bg-white px-4 py-3 shadow-[0_15px_40px_rgba(38,106,136,0.16)] sm:flex sm:items-center sm:gap-3">
+        <span className="flex size-9 items-center justify-center rounded-xl bg-[#e5f8ff] text-[#1ba7db]">
+          <Clock3 className="size-4" aria-hidden="true" />
+        </span>
+        <span>
+          <span className="block text-[10px] font-bold text-[#8299a8] uppercase">Czas trasy</span>
+          <span className="text-sm font-extrabold">6 godz. 20 min</span>
+        </span>
+      </div>
+      <div className="absolute -bottom-7 -left-7 hidden rounded-2xl bg-[#17364d] px-4 py-3 text-white shadow-[0_16px_42px_rgba(23,54,77,0.25)] sm:flex sm:items-center sm:gap-3">
+        <Ticket className="size-5 text-[#73dfff]" aria-hidden="true" />
+        <span>
+          <span className="block text-[10px] font-bold text-[#a8c3d2] uppercase">W budżecie</span>
+          <span className="text-sm font-extrabold">86 zł / 100 zł</span>
+        </span>
       </div>
 
-      <fieldset>
-        <legend className="mb-3 text-sm font-bold text-[#35556c]">
-          Strategia planowania
-        </legend>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {STRATEGIES.map((strategyOption) => {
-            const StrategyIcon = strategyOption.icon;
-            const isSelected = strategy === strategyOption.value;
-
-            return (
-              <label
-                key={strategyOption.value}
-                className={`flex cursor-pointer items-center gap-3 rounded-2xl border p-4 transition ${
-                  isSelected
-                    ? "border-[#31b9ed] bg-[#eaf9ff] shadow-[0_8px_24px_rgba(49,185,237,0.12)]"
-                    : "border-[#dcecf3] bg-white hover:border-[#9edcf2] hover:bg-[#f8fdff]"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="optimization-strategy"
-                  value={strategyOption.value}
-                  checked={isSelected}
-                  onChange={() => onStrategyChange(strategyOption.value)}
-                  className="sr-only"
-                />
-                <span
-                  className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${
-                    isSelected
-                      ? "bg-[#31b9ed] text-white"
-                      : "bg-[#edf7fb] text-[#4f8099]"
-                  }`}
-                >
-                  <StrategyIcon className="size-5" aria-hidden="true" />
-                </span>
-                <span className="min-w-0">
-                  <span className="block font-bold text-[#214158]">
-                    {strategyOption.label}
-                  </span>
-                  <span className="mt-0.5 block text-xs text-[#7890a2]">
-                    {strategyOption.description}
-                  </span>
-                </span>
-              </label>
-            );
-          })}
-        </div>
-      </fieldset>
-
-      <div className="flex flex-col gap-4 rounded-2xl bg-[#f2faff] p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white text-[#20a9df] shadow-sm">
-            <MapPinned className="size-5" aria-hidden="true" />
-          </span>
-          <p className="text-sm leading-5 text-[#557489]">
-            Lokalizacja zostanie użyta wyłącznie do rozpoczęcia trasy.
-          </p>
-        </div>
-        <Button
-          type="submit"
-          size="lg"
-          className="h-12 shrink-0 bg-[#2db9ee] px-6 text-base font-bold text-white shadow-[0_10px_28px_rgba(45,185,238,0.28)] hover:bg-[#159fd5]"
-        >
-          {isRetry ? "Spróbuj ponownie" : "Ułóżmy plan"}
-          <Navigation data-icon="inline-end" aria-hidden="true" />
-        </Button>
-      </div>
-    </form>
-  );
-}
-
-function QuestionLoading({ label }: { label: string }) {
-  return (
-    <div
-      className="flex min-h-64 flex-col items-center justify-center gap-4 text-center"
-      role="status"
-    >
-      <div className="flex size-14 items-center justify-center rounded-2xl bg-[#e5f7fe] text-[#23ace2]">
-        <LoaderCircle className="size-6 animate-spin" aria-hidden="true" />
-      </div>
-      <p className="font-semibold text-[#5f7d91]">{label}</p>
-    </div>
-  );
-}
-
-function TypingQuestion({ question }: { question: string }) {
-  const [visibleQuestion, setVisibleQuestion] = useState("");
-  const [isTyping, setIsTyping] = useState(true);
-
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      const frameId = window.requestAnimationFrame(() => {
-        setVisibleQuestion(question);
-        setIsTyping(false);
-      });
-
-      return () => window.cancelAnimationFrame(frameId);
-    }
-
-    let currentIndex = 0;
-    const intervalId = window.setInterval(() => {
-      currentIndex += 1;
-      setVisibleQuestion(question.slice(0, currentIndex));
-
-      if (currentIndex >= question.length) {
-        window.clearInterval(intervalId);
-        setIsTyping(false);
-      }
-    }, 24);
-
-    return () => window.clearInterval(intervalId);
-  }, [question]);
-
-  return (
-    <h1
-      aria-label={question}
-      className="max-w-2xl text-2xl leading-tight font-light tracking-[-0.025em] text-[#17364d] sm:text-3xl"
-    >
-      <span aria-hidden="true">{visibleQuestion}</span>
-      {isTyping && (
-        <span
-          className="ml-0.5 inline-block h-[1em] w-0.5 animate-pulse bg-[#31b9ed] align-[-0.12em]"
-          aria-hidden="true"
-        />
-      )}
-    </h1>
-  );
-}
-
-function PlanningState({
-  answeredQuestions,
-  userId,
-}: {
-  answeredQuestions: number;
-  userId: string | null;
-}) {
-  const planningResult = useQuery({
-    queryKey: ["planning-result", userId],
-    queryFn: () => getPlanningResult(userId!),
-    enabled: Boolean(userId),
-    retry: false,
-    refetchInterval: (query) =>
-      query.state.data?.status === "planning" ? 1_000 : false,
-  });
-
-  if (planningResult.data?.status === "ready") {
-    const plan = planningResult.data.plan;
-
-    if (plan) {
-      return (
-        <div className="w-full space-y-5">
-          <TripMapLoader plan={plan} />
-
-          <details className="overflow-hidden rounded-2xl border border-amber-200 bg-amber-50/90 text-left">
-            <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-amber-900">
-              Debug: LLMOutput
-            </summary>
-            <pre className="max-h-96 overflow-auto border-t border-amber-200 bg-[#241f16] p-4 text-xs leading-6 whitespace-pre text-amber-50">
-              {JSON.stringify(planningResult.data.llm_output, null, 2)}
-            </pre>
-          </details>
-
-          <details className="overflow-hidden rounded-2xl border border-[#dcecf3] bg-white/90 text-left">
-            <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-[#35556c]">
-              Debug: pełny output planera
-            </summary>
-            <pre className="max-h-96 overflow-auto border-t border-[#dcecf3] bg-[#102a3b] p-4 text-xs leading-6 whitespace-pre text-[#d9f5ff]">
-              {JSON.stringify(planningResult.data.plans, null, 2)}
-            </pre>
-          </details>
-        </div>
-      );
-    }
-
-    return (
-      <Card className="w-full border border-red-100 bg-white/90 py-0 text-center shadow-[0_24px_70px_rgba(63,143,177,0.16)]">
-        <CardContent className="flex min-h-80 items-center justify-center px-7 py-12">
-          <p className="text-sm font-semibold text-[#668094]">
-            Planner zakończył pracę, ale nie zwrócił trasy do pokazania na mapie.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (planningResult.data?.status === "failed" || planningResult.isError) {
-    return (
-      <Card className="w-full border border-red-100 bg-white/90 py-0 text-center shadow-[0_24px_70px_rgba(63,143,177,0.16)]">
-        <CardContent className="flex min-h-80 flex-col items-center justify-center px-7 py-12">
-          <h1 className="text-2xl font-extrabold text-[#17364d]">
-            Nie udało się ułożyć planu
-          </h1>
-          <p className="mt-3 max-w-lg text-sm leading-6 text-[#668094]">
-            {planningResult.data?.error ?? planningResult.error?.message}
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <Card className="w-full border border-white/80 bg-white/90 py-0 text-center shadow-[0_24px_70px_rgba(63,143,177,0.16)] ring-1 ring-[#cdeaf6]/70 backdrop-blur">
-      <CardContent className="flex min-h-112 flex-col items-center justify-center px-7 py-12">
-        <div className="relative mb-8">
-          <div className="absolute inset-0 animate-ping rounded-full bg-[#7bdcff]/25" />
-          <div className="relative flex size-20 items-center justify-center rounded-full bg-[#ddf6ff] text-[#20a9df] shadow-[0_12px_32px_rgba(45,185,238,0.2)]">
-            <Navigation className="size-9 fill-current" aria-hidden="true" />
+      <div className="rotate-[1.5deg] rounded-[2.3rem] border border-white/90 bg-white/92 p-4 shadow-[0_32px_90px_rgba(42,123,157,0.20)] backdrop-blur sm:p-6">
+        <div className="overflow-hidden rounded-[1.7rem] bg-[#eaf7f5]">
+          <div className="relative h-40 sm:h-52">
+            <div
+              className="absolute inset-0 opacity-40"
+              style={{
+                backgroundImage:
+                  "linear-gradient(#a9d6d3 1px, transparent 1px), linear-gradient(90deg, #a9d6d3 1px, transparent 1px)",
+                backgroundSize: "34px 34px",
+              }}
+            />
+            <svg className="absolute inset-0 h-full w-full" viewBox="0 0 520 210" fill="none" aria-hidden="true">
+              <path d="M48 169C113 125 127 55 218 86C302 114 332 28 464 47" stroke="#2db9ee" strokeWidth="7" strokeLinecap="round" strokeDasharray="11 12" />
+              <circle cx="48" cy="169" r="13" fill="white" stroke="#2db9ee" strokeWidth="6" />
+              <circle cx="218" cy="86" r="13" fill="white" stroke="#2db9ee" strokeWidth="6" />
+              <circle cx="464" cy="47" r="13" fill="#17364d" stroke="white" strokeWidth="6" />
+            </svg>
+            <span className="absolute top-4 left-4 rounded-full bg-white/90 px-3 py-1.5 text-xs font-extrabold text-[#35556c] shadow-sm">Twój plan na dziś</span>
           </div>
         </div>
-        <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-[#e8f8ff] px-3 py-1.5 text-xs font-bold text-[#128ec0]">
-          <Check className="size-3.5" aria-hidden="true" />
-          {answeredQuestions} odpowiedzi zapisanych
+        <div className="px-2 pt-6 pb-2">
+          <div className="mb-5 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold tracking-wide text-[#159dcc] uppercase">Kraków · 3 przystanki</p>
+              <h2 className="mt-1 text-xl font-extrabold tracking-[-0.03em]">Dzień pełen odkryć</h2>
+            </div>
+            <span className="flex size-10 items-center justify-center rounded-full bg-[#e6f8fe] text-[#18a3d7]">
+              <Route className="size-5" aria-hidden="true" />
+            </span>
+          </div>
+          <div className="space-y-2">
+            {stops.map(({ time, title, icon: Icon, tone }) => (
+              <div key={title} className="flex items-center gap-3 rounded-2xl bg-[#f7fbfd] p-3">
+                <span className={`flex size-10 items-center justify-center rounded-xl ${tone}`}>
+                  <Icon className="size-4" aria-hidden="true" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-bold text-[#8299a8]">{time}</p>
+                  <p className="truncate text-sm font-extrabold text-[#294a61]">{title}</p>
+                </div>
+                <ArrowRight className="size-4 text-[#9bb0bd]" aria-hidden="true" />
+              </div>
+            ))}
+          </div>
         </div>
-        <h1 className="text-3xl font-extrabold tracking-[-0.04em] text-[#17364d] sm:text-4xl">
-          Układamy Twój plan
-        </h1>
-        <p className="mt-4 max-w-md text-base leading-7 text-[#668094]">
-          Dzięki! Mamy wszystko, czego potrzebujemy. Twoje odpowiedzi są teraz
-          przetwarzane po stronie planera.
-        </p>
-        <div className="mt-8 flex items-center gap-2 text-sm font-semibold text-[#3d718e]">
-          <LoaderCircle
-            className="size-4 animate-spin text-[#23ace2]"
-            aria-hidden="true"
-          />
-          Przygotowuję propozycję…
-        </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

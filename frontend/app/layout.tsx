@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import { Geist, Geist_Mono, Inter, Montserrat } from "next/font/google";
 
 import { Providers } from "@/app/providers";
@@ -22,11 +23,15 @@ const montserrat = Montserrat({
 });
 
 export const metadata: Metadata = {
-  title: "VentureFlux",
-  description: "Osobisty planer zwiedzania Krakowa",
+  title: {
+    default: "VentureFlux — Kraków w Twoim rytmie",
+    template: "%s | VentureFlux",
+  },
+  description:
+    "Osobisty planer zwiedzania Krakowa, dopasowany do Twojego czasu, budżetu i zainteresowań.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html
       lang="pl"

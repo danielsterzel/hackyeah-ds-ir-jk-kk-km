@@ -28,6 +28,7 @@ export interface Stop {
   departure_at: string | null;
   visit_duration_min: number;
   price_pln: number;
+  ticket_price_known: boolean;
   opens_at: string | null;
   closes_at: string | null;
   warnings: PlanWarning[];
@@ -65,6 +66,7 @@ export interface PlanWarning {
 
 export interface RoutePlan {
   strategy: Strategy;
+  budget_pln: number;
   solver_status: SolverStatus;
   objective_value: number | null;
   total_reward: number;

@@ -12,6 +12,16 @@ Extract and normalize the user's final trip preferences into the provided output
 Use only information explicitly provided by the user, application metadata, or values that can be logically derived from them.
 
 Return only the structured output required by the schema.
+
+The output must contain every field from the schema. Never return a partial object.
+Use the application context for startLocation and optimizationStrategy.
+If the user did not specify a list preference, return an empty list.
+If the user did not specify avoidCrowds or weatherSensitive, return false.
+If the user did not specify an end location, return null for endLocation.
+If the user's answer is meaningless or does not provide a date and duration,
+use tomorrow from 09:00 to 18:00 in the application timezone.
+Use only these transport values: walking, bicycle, tram, public_transport,
+scooter, taxi, car.
 </task>
 
 <rules>
@@ -22,6 +32,10 @@ Return only the structured output required by the schema.
 3. Explicit rejection removes a previously mentioned preference and should be included in excludedCategories when applicable.
 
 4. If the user presents several acceptable alternatives, preserve all of them.
+
+4a. Order transportModes from the user's primary or preferred mode to acceptable
+fallbacks. If the user prefers cycling but also accepts walking, bicycle must be
+the first item and walking the later fallback.
 
 5. If the user says a preference does not matter, treat it as unspecified.
 

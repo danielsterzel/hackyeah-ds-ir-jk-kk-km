@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
@@ -27,6 +28,7 @@ from app.service.planning_poi_filter_service import PreferencePOIFilterService
 from app.service.planning_simple_connection_service import SimpleConnectionService
 from app.service.planning_simple_solver_decoder import SimpleSolverDecoder
 from app.service.planning_simple_solver_encoder import SimpleSolverEncoder
+from app.service.ticket_price.ticket_price import TicketService
 
 DEFAULT_DATASET_PATH = (
     Path(__file__).parents[2]
@@ -52,6 +54,7 @@ class UnsupportedTransportModeError(PlanningServiceError):
 
 
 class PlanningService:
+    _MAX_TICKET_LOOKUPS_PER_PLAN = 12
     def __init__(
         self,
         dataset_path: Path = DEFAULT_DATASET_PATH,
@@ -66,6 +69,7 @@ class PlanningService:
         self._routes: dict[UUID, RoutePlan] = {}
         self._llm_outputs: dict[UUID, LLMOutput] = {}
         self._errors: dict[UUID, str] = {}
+        self._ticket_service = TicketService()
 
     def mark_planning(self, user_id: UUID) -> None:
         self._statuses[user_id] = "planning"
@@ -103,6 +107,7 @@ class PlanningService:
             plans = await self.create_plans(payload)
             selected_plan = self._select_plan(plans, payload.optimization_strategy)
             request = self._to_planning_request(payload)
+            selected_plan = await self._add_ticket_prices_to_plan(selected_plan)
             route = RoutePlanMapper().to_route_plan(selected_plan, request)
             if route is None:
                 raise NoFeasiblePlanError("Planner nie zwrócił trasy do wyświetlenia.")
@@ -225,6 +230,10 @@ class PlanningService:
         return plans
 
     def _to_planning_request(self, payload: LLMOutput) -> PlanningRequest:
+        transport_modes = [
+            self._parse_travel_mode(mode) for mode in payload.transport_modes
+        ]
+
         return PlanningRequest(
             start_at=payload.start_at,
             end_at=payload.end_at,
@@ -234,13 +243,16 @@ class PlanningService:
                 if payload.end_location is not None
                 else None
             ),
-            budget_pln=self._budget_for_strategy(payload.optimization_strategy),
+            budget_pln=payload.budget_pln,
             preferred_categories=payload.preferred_categories,
             food_preferences=payload.food_preferences,
-            transport_modes=[
-                self._parse_travel_mode(mode) for mode in payload.transport_modes
-            ],
-            prefer_walking="walking" in payload.transport_modes,
+            transport_modes=transport_modes,
+            # The interview orders modes from the user's primary preference to
+            # acceptable fallbacks. Walking should affect POI filtering only
+            # when it is the preferred mode, not merely one of the alternatives.
+            prefer_walking=bool(
+                transport_modes and transport_modes[0] == TravelMode.WALK
+            ),
             avoid_crowds=payload.avoid_crowds,
             weather_sensitive=payload.weather_sensitive,
             optimization_strategy=payload.optimization_strategy,
@@ -256,6 +268,65 @@ class PlanningService:
             "least_crowded": Decimal("150"),
         }
         return budgets[strategy]
+
+    async def _add_ticket_prices_to_plan(self, plan: Plan) -> Plan:
+        updated_days = []
+        ticket_cost_delta = 0
+
+        for day in plan.days:
+            updated_stops = []
+            for stop in day.stops:
+                poi = stop.poi
+                old_price = poi.visit_cost.money_minor
+                try:
+                    ticket = await self._ticket_service.get_ticket_info(poi.name)
+                except Exception:
+                    logging.getLogger(__name__).exception(
+                        "Ticket price lookup failed for %s; using unknown price",
+                        poi.name,
+                    )
+                    updated_stops.append(stop)
+                    continue
+
+                price = ticket.max_price
+                if price is None:
+                    price = ticket.min_price
+                if price is None:
+                    updated_stops.append(stop)
+                    continue
+
+                new_price = max(0, round(price * 100))
+                ticket_cost_delta += new_price - old_price
+                updated_stops.append(
+                    stop.model_copy(
+                        update={
+                            "poi": poi.model_copy(
+                                update={
+                                    "visit_cost": poi.visit_cost.model_copy(
+                                        update={"money_minor": new_price}
+                                    ),
+                                    "ticket_price_known": True,
+                                }
+                            )
+                        }
+                    )
+                )
+
+            updated_days.append(day.model_copy(update={"stops": updated_stops}))
+
+        return plan.model_copy(
+            update={
+                "days": updated_days,
+                "total_cost": plan.total_cost.model_copy(
+                    update={
+                        "money_minor": max(
+                            0,
+                            plan.total_cost.money_minor + ticket_cost_delta,
+                        )
+                    }
+                ),
+            }
+        )
 
     @staticmethod
     def _coordinates(value: LLMCoordinates) -> Coordinates:
@@ -286,8 +357,6 @@ class PlanningService:
 
     @staticmethod
     def _select_travel_mode(request: PlanningRequest) -> TravelMode:
-        if request.prefer_walking:
-            return TravelMode.WALK
         if request.transport_modes:
             return request.transport_modes[0]
         return TravelMode.WALK

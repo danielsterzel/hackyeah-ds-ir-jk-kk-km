@@ -1,11 +1,14 @@
 import asyncio
+import json
+import logging
 import uuid
 from collections import deque
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from typing import get_args
 
-from ollama import AsyncClient
+from ollama import chat, AsyncClient
+from pydantic import ValidationError
 
 from app.core.settings import settings
 from app.schemas.llm import LLMOutput, PlaceCategory, UserInitQuestionnaire
@@ -13,8 +16,12 @@ from app.schemas.llm import LLMOutput, PlaceCategory, UserInitQuestionnaire
 SERVICE_DIRECTORY = Path(__file__).resolve().parent
 QUESTIONS_FILEPATH = SERVICE_DIRECTORY / "questions.txt"
 PROMPT_FILEPATH = SERVICE_DIRECTORY / "new_prompt.txt"
+# MODEL = "qwen3:30b"
 MODEL = "gpt-oss:120b"
-
+DEFAULT_KRAKOW_LOCATION = {
+    "latitude": 50.0614,
+    "longitude": 19.9372,
+}
 
 questions = QUESTIONS_FILEPATH.read_text(encoding="utf-8").strip().splitlines()
 prompt = PROMPT_FILEPATH.read_text(encoding="utf-8").strip()
@@ -30,9 +37,11 @@ CATEGORY_EXPANSIONS: dict[PlaceCategory, set[PlaceCategory]] = {
 
 client = AsyncClient(
     host="https://ollama.com",
-    headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
+    headers={
+        "Authorization": f"Bearer {settings.ollama_api_key}"
+    }
 )
-
+logger = logging.getLogger(__name__)
 
 def expand_categories(
     preferred: list[PlaceCategory],
@@ -48,11 +57,46 @@ def expand_categories(
     return sorted(result)
 
 
+def normalize_llm_payload(content: str) -> dict:
+    payload = json.loads(content)
+
+    aliases = {
+        "startDateTime": "startAt",
+        "endDateTime": "endAt",
+    }
+    for source, target in aliases.items():
+        if target not in payload and source in payload:
+            payload[target] = payload[source]
+
+    if "transportModes" not in payload and "travelMode" in payload:
+        payload["transportModes"] = [payload["travelMode"]]
+
+    transport_aliases = {
+        "walk": "walking",
+        "on foot": "walking",
+        "bike": "bicycle",
+        "cycling": "bicycle",
+        "by bike": "bicycle",
+        "rower": "bicycle",
+        "rowerem": "bicycle",
+        "public transit": "public_transport",
+        "transit": "public_transport",
+    }
+    payload["transportModes"] = [
+        transport_aliases.get(
+            str(mode).casefold().strip(), str(mode).casefold().strip()
+        )
+        for mode in payload.get("transportModes", [])
+    ]
+    return payload
+
+
 class OllamaService:
 
     def __init__(self):
         self.prompt = prompt
         self.questions = deque(questions)
+        self.user_metadata: UserInitQuestionnaire | None = None
 
         self.messages: list[dict[str, str]] = [
             {
@@ -62,12 +106,18 @@ class OllamaService:
         ]
 
     async def init_conversation(self, user_metadata: UserInitQuestionnaire):
+        self.user_metadata = user_metadata.model_copy(
+            update={
+                "latitude": DEFAULT_KRAKOW_LOCATION["latitude"],
+                "longitude": DEFAULT_KRAKOW_LOCATION["longitude"],
+            }
+        )
         context = {
             "current_datetime": datetime.now().astimezone().isoformat(),
             "timezone": "Europe/Warsaw",
             "location": {
-                "latitude": user_metadata.latitude,
-                "longitude": user_metadata.longitude,
+                "latitude": self.user_metadata.latitude,
+                "longitude": self.user_metadata.longitude,
             },
             "optimization_strategy": user_metadata.optimization_strategy,
             "allowed_place_categories": list(get_args(PlaceCategory)),
@@ -121,6 +171,7 @@ class OllamaService:
             stream=True,
             format=LLMOutput.model_json_schema(),
             think=False,
+            keep_alive="1m",
             options={"temperature": 0},
         )
 
@@ -142,21 +193,111 @@ class OllamaService:
         return output
 
     async def finalize(self) -> LLMOutput:
-        response = await client.chat(
-            model=MODEL,
-            messages=self.messages,
-            format=LLMOutput.model_json_schema(),
-            think=False,
-        )
+        last_content = ""
+        for attempt in range(2):
+            try:
+                response = await client.chat(
+                    model=MODEL,
+                    messages=self.messages,
+                    format=LLMOutput.model_json_schema(),
+                    think=False,
+                    options={"temperature": 0},
+                    keep_alive="1m",
+                )
+            except Exception:
+                logger.exception(
+                    "Questionnaire LLM request failed: attempt=%d model=%s messages=%d",
+                    attempt + 1,
+                    MODEL,
+                    len(self.messages),
+                )
+                raise
 
-        output = LLMOutput.model_validate_json(response.message.content)
+            content = response.message.content
+            last_content = content
+            logger.error(
+                "Questionnaire LLM raw response: attempt=%d model=%s content=%s",
+                attempt + 1,
+                MODEL,
+                content,
+            )
+
+            try:
+                payload = normalize_llm_payload(content)
+                output = LLMOutput.model_validate(payload)
+                break
+            except (ValidationError, ValueError):
+                if attempt == 1:
+                    logger.exception(
+                        "Questionnaire LLM response validation failed after retry: "
+                        "model=%s raw_response=%s",
+                        MODEL,
+                        content,
+                    )
+                    break
+
+                logger.warning(
+                    "Questionnaire LLM returned an incomplete schema; retrying with "
+                    "an explicit full-output instruction: %s",
+                    content,
+                )
+                self.messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your previous JSON was incomplete and is invalid. "
+                            "Return a new JSON object containing every required "
+                            "LLMOutput field: startAt, endAt, startLocation, "
+                            "endLocation, preferredCategories, excludedCategories, "
+                            "foodPreferences, transportModes, avoidCrowds, "
+                            "weatherSensitive, and optimizationStrategy. "
+                            "Use the application context for startLocation and "
+                            "optimizationStrategy. Do not omit fields."
+                        ),
+                    }
+                )
+        else:
+            raise RuntimeError("Questionnaire LLM produced no output")
+
+        if "output" not in locals():
+            output = self._fallback_output(last_content)
 
         output.preferred_categories = expand_categories(
             preferred=output.preferred_categories,
             excluded=output.excluded_categories,
         )
+        if self.user_metadata is not None:
+            output.budget_pln = self.user_metadata.budget_pln
 
         return output
+
+    def _fallback_output(self, raw_response: str) -> LLMOutput:
+        if self.user_metadata is None:
+            raise RuntimeError("Questionnaire metadata is missing")
+
+        now = datetime.now().astimezone()
+        tomorrow = now.date() + timedelta(days=1)
+        logger.warning(
+            "Using questionnaire defaults after invalid LLM response: %s",
+            raw_response,
+        )
+        return LLMOutput(
+            start_at=datetime.combine(tomorrow, time(9), tzinfo=now.tzinfo),
+            end_at=datetime.combine(tomorrow, time(18), tzinfo=now.tzinfo),
+            budget_pln=self.user_metadata.budget_pln,
+            start_location={
+                "latitude": self.user_metadata.latitude,
+                "longitude": self.user_metadata.longitude,
+            },
+            end_location=None,
+            preferred_categories=[],
+            food_preferences=[],
+            transport_modes=["walking"],
+            avoid_crowds=False,
+            weather_sensitive=False,
+            optimization_strategy=self.user_metadata.optimization_strategy,
+            excluded_categories=[],
+        )
 
 
 async def main():
