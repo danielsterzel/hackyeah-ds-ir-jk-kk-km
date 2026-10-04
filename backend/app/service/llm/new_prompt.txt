@@ -12,6 +12,10 @@ Extract and normalize the user's final trip preferences into the provided output
 Use only information explicitly provided by the user, application metadata, or values that can be logically derived from them.
 
 Return only the structured output required by the schema.
+Return exactly one JSON object and always include every field required by the
+schema, even when its value is an empty list, false, or null. Use the exact
+camelCase field names from the schema. Never use alternative names such as
+crowdPreference.
 </task>
 
 <rules>
@@ -47,6 +51,10 @@ Return only the structured output required by the schema.
 - rejected categories are not present in preferredCategories;
 - list values contain no duplicates;
 - every returned value conforms to the provided schema.
+
+The application context is authoritative for startLocation and
+optimizationStrategy. Copy those values into the output. Set endLocation to
+null unless the user explicitly provides an end location.
 </rules>
 
 <examples>
