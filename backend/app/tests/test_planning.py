@@ -428,6 +428,58 @@ def test_park_preference_does_not_match_parking():
     assert [poi.id for poi in result] == ["park"]
 
 
+@pytest.mark.parametrize("preference", ["restauracje", "restaurant", "coś zjeść"])
+def test_generic_food_request_prioritizes_restaurant(preference):
+    nearby_park = make_poi("park", 50.0618, 19.9373, category="Park")
+    farther_restaurant = make_poi(
+        "restaurant",
+        50.0710,
+        19.9373,
+        category="Restauracja",
+    )
+    request = PlanningRequest(
+        start_at=DAY.replace(hour=10),
+        end_at=DAY.replace(hour=17),
+        start_location=make_coords(*KRAKOW),
+        budget_pln=100,
+        food_preferences=[preference],
+        transport_modes=[TravelMode.WALK],
+    )
+
+    result = PreferencePOIFilterService(max_results=1).filter_pois(
+        [nearby_park, farther_restaurant],
+        request,
+    )
+
+    assert [poi.id for poi in result] == ["restaurant"]
+
+
+@pytest.mark.parametrize("preference", ["włoska", "italian", "kuchnia włoska"])
+def test_italian_food_request_matches_polish_dataset_category(preference):
+    nearby_museum = make_poi("museum", 50.0618, 19.9373, category="Muzeum")
+    farther_italian = make_poi(
+        "italian",
+        50.0710,
+        19.9373,
+        category="Kuchnia włoska",
+    )
+    request = PlanningRequest(
+        start_at=DAY.replace(hour=10),
+        end_at=DAY.replace(hour=17),
+        start_location=make_coords(*KRAKOW),
+        budget_pln=100,
+        food_preferences=[preference],
+        transport_modes=[TravelMode.WALK],
+    )
+
+    result = PreferencePOIFilterService(max_results=1).filter_pois(
+        [nearby_museum, farther_italian],
+        request,
+    )
+
+    assert [poi.id for poi in result] == ["italian"]
+
+
 # =========================================================================== #
 # 2. IPOIConnectionService
 # =========================================================================== #

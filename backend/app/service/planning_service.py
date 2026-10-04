@@ -29,7 +29,10 @@ from app.service.planning_json_poi_service import JsonPOIService
 from app.service.planning_mapper import RoutePlanMapper
 from app.service.planning_or_solver import OrToolsSolver
 from app.service.planning_ors_routing_service import OpenRouteService
-from app.service.planning_poi_filter_service import PreferencePOIFilterService
+from app.service.planning_poi_filter_service import (
+    PreferencePOIFilterService,
+    food_preference_matches,
+)
 from app.service.planning_simple_connection_service import SimpleConnectionService
 from app.service.planning_simple_solver_decoder import SimpleSolverDecoder
 from app.service.planning_simple_solver_encoder import SimpleSolverEncoder
@@ -277,11 +280,10 @@ class PlanningService:
         updated: list[POI] = []
         for poi in pois:
             type_tags = {item.casefold() for item in poi.types}
-            searchable = " ".join([poi.name, *poi.types]).casefold()
             reward = MOST_PLACES_REWARD
             if any(item.casefold() in type_tags for item in preferred_categories):
                 reward += MOST_PLACES_PREFERRED_BONUS
-            if any(item.casefold() in searchable for item in food_preferences):
+            if food_preference_matches(poi, food_preferences):
                 reward += MOST_PLACES_FOOD_BONUS
             updated.append(poi.model_copy(update={"reward": reward}))
         return updated

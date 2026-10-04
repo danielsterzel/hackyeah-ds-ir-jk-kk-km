@@ -3,12 +3,92 @@
 from __future__ import annotations
 
 import math
+import unicodedata
 from datetime import date, datetime, time, timedelta
 from typing import Sequence
 
 from app.schemas.planning import IPOIFilterService, POI, PlanningRequest
 
 EARTH_RADIUS_M = 6_371_000.0
+
+GENERIC_FOOD_REQUEST_MARKERS = (
+    "restaurac",
+    "restaurant",
+    "jedzen",
+    "zjesc",
+    "posilek",
+    "obiad",
+    "kolac",
+    "lunch",
+    "dinner",
+    "food",
+)
+FOOD_VENUE_MARKERS = (
+    "restaurac",
+    "kuchnia ",
+    "bistro",
+    "kawiar",
+    "cafe",
+    "pizzer",
+    "pizza",
+    "pierogar",
+    "pierog",
+    "sushi",
+    "ramen",
+    "burger",
+    "jadlodaj",
+    "cukiern",
+    "gastropub",
+    "fast food",
+)
+CUISINE_ALIASES = {
+    "italian": ("italian", "wlosk"),
+    "wlosk": ("italian", "wlosk"),
+    "polish": ("polish", "polsk"),
+    "polsk": ("polish", "polsk"),
+    "greek": ("greek", "greck"),
+    "greck": ("greek", "greck"),
+    "japanese": ("japanese", "japonsk"),
+    "japonsk": ("japanese", "japonsk"),
+    "chinese": ("chinese", "chinsk"),
+    "chinsk": ("chinese", "chinsk"),
+    "indian": ("indian", "indyjsk"),
+    "indyjsk": ("indian", "indyjsk"),
+    "mexican": ("mexican", "meksykansk"),
+    "meksykansk": ("mexican", "meksykansk"),
+}
+
+
+def _fold(text: str) -> str:
+    text = text.casefold().replace("ł", "l")
+    return "".join(
+        character
+        for character in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(character)
+    )
+
+
+def food_preference_matches(poi: POI, preferences: Sequence[str]) -> bool:
+    """Matches generic restaurant requests and common cuisine aliases."""
+    searchable = _fold(" ".join([poi.name, *poi.types]))
+    is_food_venue = any(marker in searchable for marker in FOOD_VENUE_MARKERS)
+
+    for preference in preferences:
+        normalized = _fold(preference).strip()
+        if not normalized:
+            continue
+        if any(marker in normalized for marker in GENERIC_FOOD_REQUEST_MARKERS):
+            if is_food_venue:
+                return True
+            continue
+        if normalized in searchable:
+            return True
+        for alias, variants in CUISINE_ALIASES.items():
+            if alias in normalized and any(
+                variant in searchable for variant in variants
+            ):
+                return True
+    return False
 
 
 def haversine_m(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> float:
@@ -106,15 +186,11 @@ class PreferencePOIFilterService(IPOIFilterService):
         request: PlanningRequest,
     ) -> tuple[bool, bool]:
         type_tags = {item.casefold() for item in poi.types}
-        searchable = " ".join([poi.name, *poi.types]).casefold()
         preferred = any(
             category.casefold() in type_tags
             for category in request.preferred_categories
         )
-        food_match = any(
-            preference.casefold() in searchable
-            for preference in request.food_preferences
-        )
+        food_match = food_preference_matches(poi, request.food_preferences)
         return preferred, food_match
 
     @staticmethod
