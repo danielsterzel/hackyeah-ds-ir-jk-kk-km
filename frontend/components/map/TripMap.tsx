@@ -447,15 +447,6 @@ export function TripMap({ plan }: { plan: RoutePlan }) {
               </CardContent>
             </Card>
 
-            {plan.warnings.length > 0 && (
-              <div className="space-y-2" aria-label="Ostrzeżenia">
-                {plan.warnings.map((warning, index) => (
-                  <div key={`${warning.code}-${index}`} role="status" className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-                    <span className="font-semibold">Informacja · </span>{warning.message}
-                  </div>
-                ))}
-              </div>
-            )}
           </aside>
         </div>
         <p className="mt-5 text-xs text-slate-500">Mapa © OpenStreetMap contributors</p>
