@@ -5,14 +5,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import get_args
 
-from ollama import chat
+from ollama import AsyncClient
 
+from app.core.settings import settings
 from app.schemas.llm import LLMOutput, PlaceCategory, UserInitQuestionnaire
 
 SERVICE_DIRECTORY = Path(__file__).resolve().parent
 QUESTIONS_FILEPATH = SERVICE_DIRECTORY / "questions.txt"
 PROMPT_FILEPATH = SERVICE_DIRECTORY / "new_prompt.txt"
-MODEL = "qwen3:30b"
+MODEL = "gpt-oss:120b"
 
 
 questions = QUESTIONS_FILEPATH.read_text(encoding="utf-8").strip().splitlines()
@@ -26,6 +27,11 @@ CATEGORY_EXPANSIONS: dict[PlaceCategory, set[PlaceCategory]] = {
     "monument": {"historic"},
     "religious": {"historic", "architecture"},
 }
+
+client = AsyncClient(
+    host="https://ollama.com",
+    headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
+)
 
 
 def expand_categories(
@@ -109,18 +115,17 @@ class OllamaService:
 
             await self.answer_response(user_answer)
 
-        stream = chat(
+        stream = await client.chat(
             model=MODEL,
             messages=self.messages,
             stream=True,
             format=LLMOutput.model_json_schema(),
             think=False,
-            keep_alive="1m",
             options={"temperature": 0},
         )
 
         final_content = ""
-        for chunk in stream:
+        async for chunk in stream:
             content = chunk.message.content
 
             if content:
@@ -137,13 +142,11 @@ class OllamaService:
         return output
 
     async def finalize(self) -> LLMOutput:
-        response = await asyncio.to_thread(
-            chat,
+        response = await client.chat(
             model=MODEL,
             messages=self.messages,
             format=LLMOutput.model_json_schema(),
             think=False,
-            keep_alive="1m",
         )
 
         output = LLMOutput.model_validate_json(response.message.content)
