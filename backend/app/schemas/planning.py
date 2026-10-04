@@ -28,6 +28,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.llm import LLMOutput
 
+ROUTE_START_POI_ID = "__user_start__"
+
 
 class DomainModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -167,6 +169,11 @@ class POIConnection(DomainModel):
     polyline: str | None = Field(
         default=None, description="Encoded polyline (dla plotera)"
     )
+    geometry: dict[str, object] | None = Field(
+        default=None,
+        description="GeoJSON LineString zwrócony przez dostawcę routingu",
+    )
+    routing_fallback: bool = False
 
     @model_validator(mode="after")
     def _no_self_loop(self) -> POIConnection:
@@ -335,6 +342,7 @@ class RouteLeg(DomainModel):
     duration_min: int = Field(ge=0)
     cost_pln: float = Field(ge=0)
     coords: list[tuple[float, float]]
+    geometry: dict[str, object] | None = None
 
 
 class RouteSummary(DomainModel):

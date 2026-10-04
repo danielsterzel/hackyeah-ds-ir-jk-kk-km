@@ -9,6 +9,7 @@ click==8.5.0
 fastapi==0.142.2
 h11==0.16.0
 idna==3.20
+httpx==0.28.1
 immutabledict==4.3.1
 iniconfig==2.3.0
 Mako==1.4.3

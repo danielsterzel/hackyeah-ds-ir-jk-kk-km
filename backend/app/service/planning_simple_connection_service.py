@@ -67,4 +67,5 @@ class SimpleConnectionService(IPOIConnectionService):
             distance_m=round(distance_m),
             duration=timedelta(hours=hours),
             fuel_cost=round(distance_m / 1000 * p.cost_per_km, 2),
+            routing_fallback=True,
         )

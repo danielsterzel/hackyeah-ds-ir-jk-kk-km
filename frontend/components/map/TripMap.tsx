@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  GeoJSON,
   MapContainer,
   Marker,
   Polyline,
@@ -18,6 +19,8 @@ import {
 } from "react-leaflet";
 import L, { type LatLngExpression, type PathOptions } from "leaflet";
 import {
+  ArrowDown,
+  ArrowUp,
   Bike,
   BusFront,
   CarFront,
@@ -27,26 +30,11 @@ import {
   Wallet,
 } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getIcon } from "@/components/map/icons";
-import type { Leg, RoutePlan, SolverStatus, Stop } from "@/types/plan";
+import type { Leg, RoutePlan, Stop } from "@/types/plan";
 
 const KRAKOW_CENTER: LatLngExpression = [50.0647, 19.945];
-const strategyLabels: Record<RoutePlan["strategy"], string> = {
-  cheapest: "Najtaniej",
-  fastest: "Najszybciej",
-  most_places: "Najwięcej miejsc",
-  least_crowded: "Bez tłumów",
-};
-
-const solverStatusLabels: Record<SolverStatus, string> = {
-  optimal: "Plan optymalny",
-  feasible: "Plan wykonalny",
-  timeout: "Osiągnięto limit czasu",
-  infeasible: "Brak wykonalnej trasy",
-  error: "Błąd planera",
-};
 
 const legStyles: Record<Leg["mode"], PathOptions> = {
   walk: { color: "#16845b", weight: 5, dashArray: "9 9", opacity: 0.9 },
@@ -141,17 +129,29 @@ function StopMarker({
 }
 
 function RouteLine({ leg }: { leg: Leg }) {
+  const popup = (
+    <Popup>
+      <div className="space-y-1 text-slate-800">
+        <p className="font-semibold">{modeLabel(leg.mode)}</p>
+        <p>
+          {formatDistance(leg.distance_m)} · {Math.round(leg.duration_min)} min
+        </p>
+        <p>{leg.cost_pln.toFixed(2)} zł</p>
+      </div>
+    </Popup>
+  );
+
+  if (leg.geometry) {
+    return (
+      <GeoJSON data={leg.geometry} pathOptions={legStyles[leg.mode]}>
+        {popup}
+      </GeoJSON>
+    );
+  }
+
   return (
     <Polyline positions={leg.coords} pathOptions={legStyles[leg.mode]}>
-      <Popup>
-        <div className="space-y-1 text-slate-800">
-          <p className="font-semibold">{modeLabel(leg.mode)}</p>
-          <p>
-            {formatDistance(leg.distance_m)} · {Math.round(leg.duration_min)} min
-          </p>
-          <p>{leg.cost_pln.toFixed(2)} zł</p>
-        </div>
-      </Popup>
+      {popup}
     </Polyline>
   );
 }
@@ -239,14 +239,6 @@ export function TripMap({ plan }: { plan: RoutePlan }) {
               Trasa zaplanowana wokół Twoich zainteresowań, czasu i tempa.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Badge variant="secondary" className="rounded-full px-4 py-2 text-sm">
-              {strategyLabels[plan.strategy]}
-            </Badge>
-            <Badge variant="outline" className="rounded-full px-4 py-2 text-sm">
-              {solverStatusLabels[plan.solver_status]}
-            </Badge>
-          </div>
         </header>
 
         {plan.solver_status === "timeout" && (
@@ -298,6 +290,9 @@ export function TripMap({ plan }: { plan: RoutePlan }) {
                 <i className="h-1 w-6 rounded bg-blue-600" /> Komunikacja
               </span>
               <span className="inline-flex items-center gap-2">
+                <i className="h-1 w-6 rounded bg-[#ea8a16]" /> Rower
+              </span>
+              <span className="inline-flex items-center gap-2">
                 <i className="h-3 w-3 rounded-full border-2 border-blue-700 bg-blue-100" />
                 Numerowany przystanek
               </span>
@@ -320,6 +315,19 @@ export function TripMap({ plan }: { plan: RoutePlan }) {
                     icon={<Wallet size={17} />}
                     label="Budżet"
                     value={`${plan.budget_pln.toFixed(0)} zł`}
+                    detail={
+                      plan.summary.fits_budget === null ? undefined : plan.summary.fits_budget ? (
+                        <span className="flex items-center gap-1 text-xs font-semibold text-emerald-700">
+                          <ArrowUp className="size-3.5" aria-hidden="true" />
+                          {Math.max(0, plan.budget_pln - plan.summary.total_cost_pln).toFixed(0)} zł zapasu
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-xs font-semibold text-red-600">
+                          <ArrowDown className="size-3.5" aria-hidden="true" />
+                          {(plan.summary.budget_over_pln ?? Math.max(0, plan.summary.total_cost_pln - plan.budget_pln)).toFixed(0)} zł ponad budżet
+                        </span>
+                      )
+                    }
                   />
                   <Metric
                     icon={<Clock3 size={17} />}
@@ -456,11 +464,22 @@ export function TripMap({ plan }: { plan: RoutePlan }) {
   );
 }
 
-function Metric({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+function Metric({
+  icon,
+  label,
+  value,
+  detail,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  detail?: ReactNode;
+}) {
   return (
     <div className="rounded-2xl bg-[#f4f7f3] p-3">
       <div className="flex items-center gap-1.5 text-emerald-800">{icon}<span className="text-xs font-medium text-slate-600">{label}</span></div>
       <p className="mt-1.5 text-base font-semibold tabular-nums">{value}</p>
+      {detail ? <div className="mt-1">{detail}</div> : null}
     </div>
   );
 }

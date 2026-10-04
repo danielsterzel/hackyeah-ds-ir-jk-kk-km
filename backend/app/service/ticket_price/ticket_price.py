@@ -16,6 +16,23 @@ TICKET_PROMPT_FILEPATH = SERVICE_DIRECTORY / "ticket_prompt.txt"
 
 MODEL = "gpt-oss:120b"
 
+# Hackathon fallback used only when the online lookup cannot provide a price.
+# Exact dataset names avoid charging similarly named free places by accident.
+MOCK_TICKET_PRICES_PLN: dict[str, float] = {
+    "zamek królewski na wawelu – państwowe zbiory sztuki": 45.0,
+    "rynek podziemny": 42.0,
+    "muzeum książąt czartoryskich": 35.0,
+    "mnk sukiennice galeria malarstwa polskiego": 32.0,
+    "muzeum sztuki współczesnej w krakowie mocak": 30.0,
+    "muzeum sztuki i techniki japońskiej manggha": 30.0,
+    "muzeum lotnictwa polskiego": 32.0,
+    "muzeum inżynierii i techniki": 40.0,
+    "muzeum archeologiczne w krakowie": 20.0,
+    "kopiec kościuszki": 24.0,
+    "ogród botaniczny uniwersytetu jagiellońskiego": 22.0,
+    "bazylika mariacka": 15.0,
+}
+
 prompt = TICKET_PROMPT_FILEPATH.read_text(
     encoding="utf-8"
 ).strip()
@@ -46,7 +63,7 @@ class TicketService:
         if cache_key in self._cache:
             return self._cache[cache_key]
         if self._web_search_unavailable:
-            return TicketInfo()
+            return self.get_fallback_ticket_info(place_name)
 
         reference_datetime = (
                 visit_at or datetime.now().astimezone()
@@ -71,7 +88,7 @@ class TicketService:
                     "Ticket price lookup disabled for this run: Ollama web search "
                     "rate limit reached"
                 )
-                return TicketInfo()
+                return self.get_fallback_ticket_info(place_name)
             raise
 
 
@@ -168,8 +185,21 @@ class TicketService:
         ticket_info = TicketInfo.model_validate_json(
             response.message.content
         )
+        if ticket_info.min_price is None and ticket_info.max_price is None:
+            ticket_info = self.get_fallback_ticket_info(place_name)
         self._cache[cache_key] = ticket_info
         return ticket_info
+
+    @staticmethod
+    def get_fallback_ticket_info(place_name: str) -> TicketInfo:
+        price = MOCK_TICKET_PRICES_PLN.get(place_name.casefold().strip())
+        if price is None:
+            return TicketInfo()
+        return TicketInfo(
+            min_price=price,
+            max_price=price,
+            confidence="low",
+        )
 
 
 async def main():

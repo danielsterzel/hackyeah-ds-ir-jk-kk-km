@@ -56,7 +56,7 @@ class PreferencePOIFilterService(IPOIFilterService):
         pois: Sequence[POI],
         request: PlanningRequest,
     ) -> list[POI]:
-        candidates: list[tuple[float, POI]] = []
+        candidates: list[tuple[int, float, POI]] = []
         for poi in pois:
             distance = self._distance_from_request(poi, request)
             if self._max_distance_m is not None and distance > self._max_distance_m:
@@ -74,11 +74,15 @@ class PreferencePOIFilterService(IPOIFilterService):
                 avoid_crowds=request.avoid_crowds,
             )
             candidates.append(
-                (self._ranking_score(distance, filtered_poi, request), filtered_poi)
+                (
+                    0 if preferred or food_match else 1,
+                    self._ranking_score(distance, filtered_poi, request),
+                    filtered_poi,
+                )
             )
 
-        candidates.sort(key=lambda item: (item[0], item[1].id))
-        result = [poi for _, poi in candidates]
+        candidates.sort(key=lambda item: (item[0], item[1], item[2].id))
+        result = [poi for _, _, poi in candidates]
         if self._max_results is not None:
             return result[: self._max_results]
         return result
@@ -101,9 +105,10 @@ class PreferencePOIFilterService(IPOIFilterService):
         poi: POI,
         request: PlanningRequest,
     ) -> tuple[bool, bool]:
+        type_tags = {item.casefold() for item in poi.types}
         searchable = " ".join([poi.name, *poi.types]).casefold()
         preferred = any(
-            category.casefold() in searchable
+            category.casefold() in type_tags
             for category in request.preferred_categories
         )
         food_match = any(
@@ -114,8 +119,8 @@ class PreferencePOIFilterService(IPOIFilterService):
 
     @staticmethod
     def _matches_category(poi: POI, categories: Sequence[str]) -> bool:
-        searchable = " ".join([poi.name, *poi.types]).casefold()
-        return any(category.casefold() in searchable for category in categories)
+        type_tags = {item.casefold() for item in poi.types}
+        return any(category.casefold() in type_tags for category in categories)
 
     def _with_adjusted_reward(
         self,

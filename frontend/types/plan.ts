@@ -1,3 +1,5 @@
+import type { LineString } from "geojson";
+
 export type Mode = "walk" | "bus" | "bike" | "scooter" | "taxi" | "car";
 export type Strategy = "cheapest" | "fastest" | "most_places" | "least_crowded";
 export type SolverStatus =
@@ -43,6 +45,7 @@ export interface Leg {
   duration_min: number;
   cost_pln: number;
   coords: [number, number][];
+  geometry: LineString | null;
 }
 
 export interface Summary {

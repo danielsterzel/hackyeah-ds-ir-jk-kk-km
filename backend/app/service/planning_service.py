@@ -12,18 +12,23 @@ from app.schemas.llm import Coordinates as LLMCoordinates
 from app.schemas.llm import LLMOutput
 from app.schemas.planning import (
     Coordinates,
+    CostVector,
     CostWeights,
     OptionalCostVector,
     Plan,
+    POI,
+    POIConnection,
     PlanningConstraints,
     PlanningRequest,
     PlanningResultResponse,
+    ROUTE_START_POI_ID,
     RoutePlan,
     TravelMode,
 )
 from app.service.planning_json_poi_service import JsonPOIService
 from app.service.planning_mapper import RoutePlanMapper
 from app.service.planning_or_solver import OrToolsSolver
+from app.service.planning_ors_routing_service import OpenRouteService
 from app.service.planning_poi_filter_service import PreferencePOIFilterService
 from app.service.planning_simple_connection_service import SimpleConnectionService
 from app.service.planning_simple_solver_decoder import SimpleSolverDecoder
@@ -35,6 +40,9 @@ DEFAULT_DATASET_PATH = (
     / "resources"
     / "dataset_crawler-google-places_2026-10-03_15-34-29-547.json"
 )
+MOST_PLACES_REWARD = 1_000.0
+MOST_PLACES_PREFERRED_BONUS = 10.0
+MOST_PLACES_FOOD_BONUS = 5.0
 
 
 class PlanningServiceError(Exception):
@@ -55,11 +63,13 @@ class UnsupportedTransportModeError(PlanningServiceError):
 
 class PlanningService:
     _MAX_TICKET_LOOKUPS_PER_PLAN = 12
+
     def __init__(
         self,
         dataset_path: Path = DEFAULT_DATASET_PATH,
         search_radius_m: int = 25_000,
-        candidate_limits: tuple[int, ...] = (30, 60, 100),
+        candidate_limits: tuple[int, ...] = (30,),
+        routing_service: OpenRouteService | None = None,
     ) -> None:
         self._dataset_path = dataset_path
         self._search_radius_m = search_radius_m
@@ -70,6 +80,7 @@ class PlanningService:
         self._llm_outputs: dict[UUID, LLMOutput] = {}
         self._errors: dict[UUID, str] = {}
         self._ticket_service = TicketService()
+        self._routing_service = routing_service or OpenRouteService()
 
     def mark_planning(self, user_id: UUID) -> None:
         self._statuses[user_id] = "planning"
@@ -107,6 +118,8 @@ class PlanningService:
             plans = await self.create_plans(payload)
             selected_plan = self._select_plan(plans, payload.optimization_strategy)
             request = self._to_planning_request(payload)
+            mode = self._select_travel_mode(request)
+            selected_plan = await self._add_route_geometries(selected_plan, mode)
             selected_plan = await self._add_ticket_prices_to_plan(selected_plan)
             route = RoutePlanMapper().to_route_plan(selected_plan, request)
             if route is None:
@@ -123,7 +136,11 @@ class PlanningService:
     @staticmethod
     def _select_plan(plans: list[Plan], strategy: str) -> Plan:
         def attractions_count(plan: Plan) -> int:
-            return sum(len(day.stops) for day in plan.days)
+            return sum(
+                stop.poi.id != ROUTE_START_POI_ID
+                for day in plan.days
+                for stop in day.stops
+            )
 
         usable_plans = [plan for plan in plans if attractions_count(plan) > 0]
         if not usable_plans:
@@ -187,14 +204,27 @@ class PlanningService:
             ).filter_pois(pois, request)
             if not filtered_pois:
                 continue
-
-            constraints = self._to_constraints(request, mode)
-            connections = await SimpleConnectionService().get_connections(
+            filtered_pois = self._apply_strategy_rewards(
                 filtered_pois,
-                mode,
+                request.optimization_strategy,
+                preferred_categories=request.preferred_categories,
+                food_preferences=request.food_preferences,
             )
+
+            start_poi = POI(
+                id=ROUTE_START_POI_ID,
+                name="Twoja lokalizacja",
+                location=request.start_location,
+                visit_cost=CostVector(),
+                reward=0,
+            )
+            route_pois = [start_poi, *filtered_pois]
+            constraints = self._to_constraints(request, mode).model_copy(
+                update={"start_poi_id": ROUTE_START_POI_ID}
+            )
+            connections = await self._get_connections(route_pois, mode)
             solver_input = SimpleSolverEncoder().encode(
-                filtered_pois,
+                route_pois,
                 connections,
                 constraints,
             )
@@ -205,7 +235,7 @@ class PlanningService:
             plan = SimpleSolverDecoder().decode(
                 result,
                 solver_input,
-                filtered_pois,
+                route_pois,
                 connections,
                 constraints,
             )
@@ -228,6 +258,146 @@ class PlanningService:
             raise NoFeasiblePlanError("Nie udało się utworzyć wykonalnego planu.")
 
         return plans
+
+    @staticmethod
+    def _apply_strategy_rewards(
+        pois: list[POI],
+        strategy: str,
+        *,
+        preferred_categories: list[str] | None = None,
+        food_preferences: list[str] | None = None,
+    ) -> list[POI]:
+        if strategy != "most_places":
+            return pois
+        # A large, equal reward makes dropping any additional feasible POI
+        # more expensive than travel-time tie breakers in the routing model.
+        # Small bonuses preserve interview preferences when route counts tie.
+        preferred_categories = preferred_categories or []
+        food_preferences = food_preferences or []
+        updated: list[POI] = []
+        for poi in pois:
+            type_tags = {item.casefold() for item in poi.types}
+            searchable = " ".join([poi.name, *poi.types]).casefold()
+            reward = MOST_PLACES_REWARD
+            if any(item.casefold() in type_tags for item in preferred_categories):
+                reward += MOST_PLACES_PREFERRED_BONUS
+            if any(item.casefold() in searchable for item in food_preferences):
+                reward += MOST_PLACES_FOOD_BONUS
+            updated.append(poi.model_copy(update={"reward": reward}))
+        return updated
+
+    async def _get_connections(
+        self,
+        pois: list[POI],
+        mode: TravelMode,
+    ) -> list[POIConnection]:
+        fallback = await SimpleConnectionService().get_connections(pois, mode)
+        if not self._routing_service.supports(mode):
+            return fallback
+
+        try:
+            routed = await self._routing_service.get_matrix_connections(pois, mode)
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "ORS matrix routing failed; using simple routing fallback"
+            )
+            return fallback
+
+        routed_by_pair = {
+            (connection.from_poi_id, connection.to_poi_id): connection
+            for connection in routed
+        }
+        return [
+            routed_by_pair.get(
+                (connection.from_poi_id, connection.to_poi_id),
+                connection,
+            )
+            for connection in fallback
+        ]
+
+    async def _add_route_geometries(
+        self,
+        plan: Plan,
+        mode: TravelMode,
+    ) -> Plan:
+        if not self._routing_service.supports(mode):
+            return plan
+
+        updated_days = []
+        for day in plan.days:
+            updated_stops = []
+            money_minor = 0
+            for stop in day.stops:
+                connection = stop.connection_from_previous
+                arrival = stop.arrival
+                departure = stop.departure
+
+                if updated_stops and connection is not None:
+                    previous = updated_stops[-1]
+                    if not connection.routing_fallback:
+                        try:
+                            connection = await self._routing_service.get_direction(
+                                previous.poi,
+                                stop.poi,
+                                mode,
+                            )
+                        except Exception:
+                            logging.getLogger(__name__).exception(
+                                "ORS directions routing failed for %s -> %s; "
+                                "keeping matrix leg without geometry",
+                                previous.poi.id,
+                                stop.poi.id,
+                            )
+
+                    earliest_arrival = previous.departure + connection.duration
+                    arrival = max(arrival, earliest_arrival)
+                    departure = arrival + (stop.departure - stop.arrival)
+                    money_minor += round(connection.fuel_cost * 100)
+
+                money_minor += stop.poi.visit_cost.money_minor
+                updated_stops.append(
+                    stop.model_copy(
+                        update={
+                            "arrival": arrival,
+                            "departure": departure,
+                            "connection_from_previous": connection,
+                        }
+                    )
+                )
+
+            time_s = (
+                max(
+                    0,
+                    round(
+                        (
+                            updated_stops[-1].departure - updated_stops[0].arrival
+                        ).total_seconds()
+                    ),
+                )
+                if updated_stops
+                else 0
+            )
+            updated_days.append(
+                day.model_copy(
+                    update={
+                        "stops": updated_stops,
+                        "total_cost": CostVector(
+                            time_s=time_s,
+                            money_minor=money_minor,
+                        ),
+                    }
+                )
+            )
+
+        return plan.model_copy(
+            update={
+                "days": updated_days,
+                "total_cost": sum(
+                    (day.total_cost for day in updated_days),
+                    CostVector(),
+                ),
+            }
+        )
 
     def _to_planning_request(self, payload: LLMOutput) -> PlanningRequest:
         transport_modes = [
@@ -276,17 +446,19 @@ class PlanningService:
         for day in plan.days:
             updated_stops = []
             for stop in day.stops:
+                if stop.poi.id == ROUTE_START_POI_ID:
+                    updated_stops.append(stop)
+                    continue
                 poi = stop.poi
                 old_price = poi.visit_cost.money_minor
                 try:
                     ticket = await self._ticket_service.get_ticket_info(poi.name)
                 except Exception:
                     logging.getLogger(__name__).exception(
-                        "Ticket price lookup failed for %s; using unknown price",
+                        "Ticket price lookup failed for %s; using static fallback",
                         poi.name,
                     )
-                    updated_stops.append(stop)
-                    continue
+                    ticket = self._ticket_service.get_fallback_ticket_info(poi.name)
 
                 price = ticket.max_price
                 if price is None:
@@ -376,7 +548,7 @@ class PlanningService:
                 money_minor=budget_minor,
             ),
             weights=CostWeights(),
-            day_start=request.start_at.time(),
+            day_start=request.start_at.timetz(),
             plan_date=request.start_at,
         )
 

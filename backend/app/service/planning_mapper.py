@@ -21,6 +21,7 @@ from app.schemas.planning import (
     RouteStop,
     RouteSummary,
     RouteWarning,
+    ROUTE_START_POI_ID,
     TravelMode,
 )
 
@@ -101,7 +102,12 @@ class RoutePlanMapper:
             return None
 
         route_stops = [
-            self._to_route_stop(stop, day.day_index, index + 1)
+            self._to_route_stop(
+                stop,
+                day.day_index,
+                index + 1,
+                is_start=stop.poi.id == ROUTE_START_POI_ID,
+            )
             for index, stop in enumerate(day.stops)
         ]
         legs: list[RouteLeg] = []
@@ -137,9 +143,12 @@ class RoutePlanMapper:
                         (previous.poi.location.lat, previous.poi.location.lng),
                         (stop.poi.location.lat, stop.poi.location.lng),
                     ],
+                    geometry=connection.geometry if connection is not None else None,
                 )
             )
-            if connection is None or connection.polyline is None:
+            if connection is None or (
+                connection.polyline is None and connection.geometry is None
+            ):
                 warnings.append(
                     RouteWarning(
                         code="ROUTING_FALLBACK",
@@ -176,11 +185,12 @@ class RoutePlanMapper:
                 total_duration_min=round(plan.total_cost.time_s / 60),
                 total_distance_m=total_distance_m,
                 total_walking_m=total_walking_m,
-                attractions_count=len(route_stops),
-                fits_time=time_over_s == 0,
-                fits_budget=plan.total_cost.money_minor <= round(
-                    request.budget_pln * 100
+                attractions_count=sum(
+                    stop.kind == "attraction" for stop in route_stops
                 ),
+                fits_time=time_over_s == 0,
+                fits_budget=plan.total_cost.money_minor
+                <= round(request.budget_pln * 100),
                 time_over_min=round(time_over_s / 60),
                 budget_over_pln=max(
                     0,
@@ -198,9 +208,13 @@ class RoutePlanMapper:
         stop: PlanStop,
         day_index: int,
         order: int,
+        *,
+        is_start: bool = False,
     ) -> RouteStop:
         stop_id = f"day-{day_index}-stop-{order}"
-        opens_at, closes_at, warnings = self._opening_window(stop, stop_id)
+        opens_at, closes_at, warnings = (
+            (None, None, []) if is_start else self._opening_window(stop, stop_id)
+        )
         category = next(
             (item for item in stop.poi.types if item in INTERNAL_CATEGORIES),
             stop.poi.types[0] if stop.poi.types else None,
@@ -209,7 +223,7 @@ class RoutePlanMapper:
         return RouteStop(
             id=stop_id,
             order=order,
-            kind="attraction",
+            kind="start" if is_start else "attraction",
             place=RoutePlace(
                 id=stop.poi.id,
                 name=stop.poi.name,

@@ -34,6 +34,7 @@ from app.api.planning_controller import create_plans
 from app.service.planning_json_poi_service import JsonPOIService
 from app.service.planning_mapper import SimplePlanningMapper
 from app.service.planning_or_solver import OrToolsSolver
+from app.service.planning_poi_filter_service import PreferencePOIFilterService
 from app.service.planning_service import PlanningService
 from app.service.planning_simple_connection_service import SimpleConnectionService
 from app.service.planning_simple_solver_decoder import SimpleSolverDecoder
@@ -45,6 +46,7 @@ from app.schemas.planning import (
     OptionalCostVector,
     Plan,
     PlanningConstraints,
+    PlanningRequest,
     PlotterPayload,
     POI,
     POIConnection,
@@ -386,6 +388,46 @@ async def test_poi_service_smaller_radius_is_subset(poi_service):
     assert small <= big
 
 
+def test_preferred_category_is_kept_in_limited_candidate_shortlist():
+    nearby_garden = make_poi("garden", 50.0618, 19.9373, category="garden")
+    farther_museum = make_poi("museum", 50.0710, 19.9373, category="museum")
+    request = PlanningRequest(
+        start_at=DAY.replace(hour=10),
+        end_at=DAY.replace(hour=17),
+        start_location=make_coords(*KRAKOW),
+        budget_pln=100,
+        preferred_categories=["museum"],
+        transport_modes=[TravelMode.WALK],
+    )
+
+    result = PreferencePOIFilterService(max_results=1).filter_pois(
+        [nearby_garden, farther_museum],
+        request,
+    )
+
+    assert [poi.id for poi in result] == ["museum"]
+
+
+def test_park_preference_does_not_match_parking():
+    nearby_parking = make_poi("parking", 50.0618, 19.9373, category="Parking")
+    farther_park = make_poi("park", 50.0710, 19.9373, category="park")
+    request = PlanningRequest(
+        start_at=DAY.replace(hour=10),
+        end_at=DAY.replace(hour=17),
+        start_location=make_coords(*KRAKOW),
+        budget_pln=100,
+        preferred_categories=["park"],
+        transport_modes=[TravelMode.WALK],
+    )
+
+    result = PreferencePOIFilterService(max_results=1).filter_pois(
+        [nearby_parking, farther_park],
+        request,
+    )
+
+    assert [poi.id for poi in result] == ["park"]
+
+
 # =========================================================================== #
 # 2. IPOIConnectionService
 # =========================================================================== #
@@ -594,6 +636,107 @@ def test_solver_more_budget_never_gives_less_reward(solver):
     low = solver.solve(make_solver_input(rewards, visit, edges, budget=6, start="s"))
     high = solver.solve(make_solver_input(rewards, visit, edges, budget=20, start="s"))
     assert result_total_reward(high) >= result_total_reward(low)
+
+
+def test_most_places_strategy_prefers_three_short_visits_over_one_high_reward_visit(
+    encoder, solver, decoder
+):
+    start = make_poi("start", *KRAKOW, visit_min=0, reward=0)
+    long_visit = make_poi("long", *KRAKOW, visit_min=90, reward=100)
+    short_visits = [
+        make_poi(f"short-{index}", *KRAKOW, visit_min=30, reward=1)
+        for index in range(3)
+    ]
+    constraints = PlanningConstraints(
+        start_poi_id=start.id,
+        days=1,
+        travel_mode=TravelMode.WALK,
+        budget_per_route=OptionalCostVector(time_s=90 * 60),
+        weights=CostWeights(),
+        day_start=DAY.replace(hour=10).time(),
+        plan_date=DAY.replace(hour=10),
+    )
+
+    normal_pois = [start, long_visit, *short_visits]
+    connections = full_connections(normal_pois)
+    normal_input = encoder.encode(normal_pois, connections, constraints)
+    normal_result = solver.solve(normal_input)
+    assert result_route(normal_result, normal_input) == ["start", "long"]
+
+    optimized_attractions = PlanningService._apply_strategy_rewards(
+        [long_visit, *short_visits],
+        "most_places",
+        preferred_categories=[],
+        food_preferences=[],
+    )
+    optimized_pois = [start, *optimized_attractions]
+    optimized_input = encoder.encode(optimized_pois, connections, constraints)
+    optimized_result = solver.solve(optimized_input)
+    optimized_plan = decoder.decode(
+        optimized_result,
+        optimized_input,
+        optimized_pois,
+        connections,
+        constraints,
+    )
+    optimized_ids = [
+        stop.poi.id
+        for day in optimized_plan.days
+        for stop in day.stops
+        if stop.poi.id != start.id
+    ]
+
+    assert set(optimized_ids) == {"short-0", "short-1", "short-2"}
+    assert len(optimized_ids) == 3
+
+
+def test_most_places_strategy_keeps_category_preference_as_tie_breaker(
+    encoder, solver, decoder
+):
+    start = make_poi("start", *KRAKOW, visit_min=0, reward=0)
+    museums = [
+        make_poi(f"museum-{index}", *KRAKOW, category="museum", visit_min=30)
+        for index in range(2)
+    ]
+    gardens = [
+        make_poi(f"garden-{index}", *KRAKOW, category="garden", visit_min=30)
+        for index in range(2)
+    ]
+    attractions = PlanningService._apply_strategy_rewards(
+        [*museums, *gardens],
+        "most_places",
+        preferred_categories=["museum"],
+        food_preferences=[],
+    )
+    pois = [start, *attractions]
+    connections = full_connections(pois)
+    constraints = PlanningConstraints(
+        start_poi_id=start.id,
+        days=1,
+        travel_mode=TravelMode.WALK,
+        budget_per_route=OptionalCostVector(time_s=60 * 60),
+        weights=CostWeights(),
+        day_start=DAY.replace(hour=10).time(),
+        plan_date=DAY.replace(hour=10),
+    )
+
+    solver_input = encoder.encode(pois, connections, constraints)
+    result = solver.solve(solver_input)
+    plan = decoder.decode(
+        result,
+        solver_input,
+        pois,
+        connections,
+        constraints,
+    )
+    attraction_ids = {
+        stop.poi.id
+        for day in plan.days
+        for stop in day.stops
+        if stop.poi.id != start.id
+    }
+
+    assert attraction_ids == {"museum-0", "museum-1"}
 
 
 def test_solver_scales_to_realistic_size(solver):
@@ -880,10 +1023,14 @@ async def test_planning_result_contains_single_map_ready_route():
     assert result.plan is not None
     assert result.plan.strategy == "cheapest"
     assert result.plan.stops
+    assert result.plan.stops[0].kind == "start"
+    assert result.plan.stops[0].place.name == "Twoja lokalizacja"
+    assert result.plan.stops[0].arrival_at == llm_output_variants()[0].start_at
     assert [stop.order for stop in result.plan.stops] == list(
         range(1, len(result.plan.stops) + 1)
     )
     assert len(result.plan.legs) == max(0, len(result.plan.stops) - 1)
     assert all(len(leg.coords) >= 2 for leg in result.plan.legs)
-    assert result.plan.summary.attractions_count == len(result.plan.stops)
+    assert result.plan.legs[0].from_stop_id == result.plan.stops[0].id
+    assert result.plan.summary.attractions_count == len(result.plan.stops) - 1
     json.loads(result.model_dump_json())

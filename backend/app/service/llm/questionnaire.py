@@ -18,11 +18,6 @@ QUESTIONS_FILEPATH = SERVICE_DIRECTORY / "questions.txt"
 PROMPT_FILEPATH = SERVICE_DIRECTORY / "new_prompt.txt"
 # MODEL = "qwen3:30b"
 MODEL = "gpt-oss:120b"
-DEFAULT_KRAKOW_LOCATION = {
-    "latitude": 50.0614,
-    "longitude": 19.9372,
-}
-
 questions = QUESTIONS_FILEPATH.read_text(encoding="utf-8").strip().splitlines()
 prompt = PROMPT_FILEPATH.read_text(encoding="utf-8").strip()
 
@@ -106,12 +101,7 @@ class OllamaService:
         ]
 
     async def init_conversation(self, user_metadata: UserInitQuestionnaire):
-        self.user_metadata = user_metadata.model_copy(
-            update={
-                "latitude": DEFAULT_KRAKOW_LOCATION["latitude"],
-                "longitude": DEFAULT_KRAKOW_LOCATION["longitude"],
-            }
-        )
+        self.user_metadata = user_metadata
         context = {
             "current_datetime": datetime.now().astimezone().isoformat(),
             "timezone": "Europe/Warsaw",
