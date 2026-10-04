@@ -129,7 +129,7 @@ Pydantic akceptuje nazwy camelCase i snake_case, ponieważ schemat LLM ma genera
 | `startLocation` | pierwszy węzeł macierzy i trasy | bardzo silny |
 | `endLocation` | tylko ranking odległości kandydatów; nie tworzy końcowego węzła | słaby / niepełny |
 | `preferredCategories` | priorytet shortlisty i mnożnik nagrody | silny |
-| `foodPreferences` | dopasowanie tekstowe nazwy/typów i mnożnik nagrody | średni, zależny od danych |
+| `foodPreferences` | wybór jednego obowiązkowego lokalu gastronomicznego na trasie | silny, jeśli znaleziono lokal |
 | `transportModes` | używany jest tylko pierwszy tryb | bardzo silny dla pierwszego elementu |
 | `avoidCrowds` | obniża reward popularnych miejsc według liczby recenzji | umiarkowany, tylko proxy |
 | `weatherSensitive` | zapisane, ale bez dalszego użycia | brak wpływu |
@@ -288,7 +288,18 @@ dokładny tag w preferredCategories: reward × 1.5
 dopasowana foodPreference w nazwie lub typach: reward × 1.25
 ```
 
-Kandydaci pasujący do kategorii lub jedzenia trafiają do pierwszego koszyka shortlisty. Dopiero potem rozpatrywane są inne miejsca. Ogólne odpowiedzi takie jak `restauracje`, `restaurant`, `jedzenie` i `coś zjeść` rozpoznają kategorie lokali gastronomicznych. Popularne nazwy kuchni, m.in. polska, włoska, grecka, japońska, chińska, indyjska i meksykańska, mają mapping polsko-angielski.
+Ogólne odpowiedzi takie jak `restauracje`, `restaurant`, `jedzenie` i `coś zjeść` rozpoznają kategorie lokali gastronomicznych. Popularne nazwy kuchni, m.in. polska, włoska, grecka, japońska, chińska, indyjska i meksykańska, mają mapping polsko-angielski.
+
+W głównym pipeline, jeśli `foodPreferences` nie jest puste:
+
+1. przy kilku kuchniach losowana jest jedna preferencja,
+2. wybierany jest najlepiej oceniony/rankingowany dostępny lokal tej kuchni,
+3. jeśli nie ma dopasowania kuchni, wybierany jest ogólny lokal gastronomiczny,
+4. do shortlisty trafia dokładnie jeden kandydat gastronomiczny,
+5. jego identyfikator trafia do `must_visit_ids`, więc OR-Tools musi umieścić go na trasie,
+6. pozostałe miejsca nadal pochodzą z preferowanych atrakcji.
+
+Odpowiedź twierdząca bez wskazania kuchni jest przez prompt normalizowana do `foodPreferences=["restaurant"]`. Odpowiedź negatywna daje pustą listę.
 
 ### 7.4. Tłumy
 
@@ -406,6 +417,8 @@ money budget = budgetPln × 100
 ```
 
 To realne wartości ORS trafiają do optimizera; geometria nie jest mu potrzebna.
+
+Wybrany przystanek gastronomiczny ma `mandatory = true`. Inne atrakcje pozostają opcjonalne.
 
 ## 11. Model OR-Tools
 
@@ -545,7 +558,7 @@ Summary zawiera koszt, czas dnia, dystans, dystans pieszy, liczbę atrakcji, zgo
 4. Pogoda nie wpływa na plan.
 5. Tłumy to proxy liczby opinii.
 6. Ceny biletów trafiają po optimizerze.
-7. Jedzenie działa na markerach i aliasach tekstowych lokalnego datasetu; nie korzysta z zewnętrznej bazy restauracji.
+7. Dobór restauracji działa na markerach i aliasach lokalnego datasetu; nie korzysta z zewnętrznej bazy restauracji.
 8. `endLocation` nie jest końcem trasy.
 9. Wizyty mają domyślnie 60 minut.
 10. Stan jest przechowywany w pamięci procesu.

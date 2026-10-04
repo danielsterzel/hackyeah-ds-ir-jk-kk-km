@@ -18,6 +18,9 @@ Use the application context for startLocation and optimizationStrategy.
 If the user did not specify a list preference, return an empty list.
 If the user did not specify avoidCrowds or weatherSensitive, return false.
 If the user did not specify an end location, return null for endLocation.
+If the user wants a food stop but does not care about a specific cuisine,
+return ["restaurant"] in foodPreferences. Return an empty foodPreferences list
+only when the user does not want a food stop or did not answer affirmatively.
 If the user's answer is meaningless or does not provide a date and duration,
 use tomorrow from 09:00 to 18:00 in the application timezone.
 Use only these transport values: walking, bicycle, tram, public_transport,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
@@ -32,6 +33,7 @@ from app.service.planning_ors_routing_service import OpenRouteService
 from app.service.planning_poi_filter_service import (
     PreferencePOIFilterService,
     food_preference_matches,
+    is_food_venue,
 )
 from app.service.planning_simple_connection_service import SimpleConnectionService
 from app.service.planning_simple_solver_decoder import SimpleSolverDecoder
@@ -199,19 +201,30 @@ class PlanningService:
 
         plans: list[Plan] = []
         seen: set[tuple[tuple[str, ...], ...]] = set()
+        selected_food_preference = (
+            random.choice(request.food_preferences)
+            if request.food_preferences
+            else None
+        )
 
         for limit in self._candidate_limits:
-            filtered_pois = PreferencePOIFilterService(
-                max_results=limit,
-                max_distance_m=self._search_radius_m,
-            ).filter_pois(pois, request)
+            filtered_pois, food_stop_id = self._prepare_candidates(
+                pois,
+                request,
+                limit,
+                selected_food_preference,
+            )
             if not filtered_pois:
                 continue
             filtered_pois = self._apply_strategy_rewards(
                 filtered_pois,
                 request.optimization_strategy,
                 preferred_categories=request.preferred_categories,
-                food_preferences=request.food_preferences,
+                food_preferences=(
+                    [selected_food_preference]
+                    if selected_food_preference is not None
+                    else []
+                ),
             )
 
             start_poi = POI(
@@ -223,7 +236,10 @@ class PlanningService:
             )
             route_pois = [start_poi, *filtered_pois]
             constraints = self._to_constraints(request, mode).model_copy(
-                update={"start_poi_id": ROUTE_START_POI_ID}
+                update={
+                    "start_poi_id": ROUTE_START_POI_ID,
+                    "must_visit_ids": [food_stop_id] if food_stop_id else [],
+                }
             )
             connections = await self._get_connections(route_pois, mode)
             solver_input = SimpleSolverEncoder().encode(
@@ -261,6 +277,51 @@ class PlanningService:
             raise NoFeasiblePlanError("Nie udało się utworzyć wykonalnego planu.")
 
         return plans
+
+    def _prepare_candidates(
+        self,
+        pois: list[POI],
+        request: PlanningRequest,
+        limit: int,
+        selected_food_preference: str | None,
+    ) -> tuple[list[POI], str | None]:
+        filter_service = PreferencePOIFilterService(
+            max_results=None,
+            max_distance_m=self._search_radius_m,
+        )
+        regular_request = request.model_copy(update={"food_preferences": []})
+        regular_candidates = filter_service.filter_pois(pois, regular_request)
+        if selected_food_preference is None:
+            return regular_candidates[:limit], None
+
+        food_request = request.model_copy(
+            update={
+                "preferred_categories": [],
+                "food_preferences": [selected_food_preference],
+            }
+        )
+        food_candidates = filter_service.filter_pois(pois, food_request)
+        food_stop = next(
+            (
+                poi
+                for poi in food_candidates
+                if food_preference_matches(poi, [selected_food_preference])
+            ),
+            None,
+        )
+        if food_stop is None:
+            food_stop = next(
+                (poi for poi in food_candidates if is_food_venue(poi)), None
+            )
+        if food_stop is None:
+            return regular_candidates[:limit], None
+
+        non_food_candidates = [
+            poi
+            for poi in regular_candidates
+            if poi.id != food_stop.id and not is_food_venue(poi)
+        ]
+        return [food_stop, *non_food_candidates][:limit], food_stop.id
 
     @staticmethod
     def _apply_strategy_rewards(

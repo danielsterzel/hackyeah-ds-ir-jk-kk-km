@@ -91,6 +91,11 @@ def food_preference_matches(poi: POI, preferences: Sequence[str]) -> bool:
     return False
 
 
+def is_food_venue(poi: POI) -> bool:
+    searchable = _fold(" ".join([poi.name, *poi.types]))
+    return any(marker in searchable for marker in FOOD_VENUE_MARKERS)
+
+
 def haversine_m(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> float:
     """Zwraca odległość po powierzchni Ziemi w metrach."""
     lat1, lat2 = math.radians(a_lat), math.radians(b_lat)

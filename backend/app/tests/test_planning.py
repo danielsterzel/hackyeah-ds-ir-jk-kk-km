@@ -34,7 +34,10 @@ from app.api.planning_controller import create_plans
 from app.service.planning_json_poi_service import JsonPOIService
 from app.service.planning_mapper import SimplePlanningMapper
 from app.service.planning_or_solver import OrToolsSolver
-from app.service.planning_poi_filter_service import PreferencePOIFilterService
+from app.service.planning_poi_filter_service import (
+    PreferencePOIFilterService,
+    is_food_venue,
+)
 from app.service.planning_service import PlanningService
 from app.service.planning_simple_connection_service import SimpleConnectionService
 from app.service.planning_simple_solver_decoder import SimpleSolverDecoder
@@ -478,6 +481,34 @@ def test_italian_food_request_matches_polish_dataset_category(preference):
     )
 
     assert [poi.id for poi in result] == ["italian"]
+
+
+def test_planning_candidates_contain_exactly_one_mandatory_food_stop():
+    nearby_park = make_poi("park", 50.0618, 19.9373, category="Park")
+    nearby_museum = make_poi("museum", 50.0620, 19.9373, category="Muzeum")
+    italian = make_poi("italian", 50.0630, 19.9373, category="Kuchnia włoska")
+    polish = make_poi("polish", 50.0640, 19.9373, category="Kuchnia polska")
+    request = PlanningRequest(
+        start_at=DAY.replace(hour=10),
+        end_at=DAY.replace(hour=17),
+        start_location=make_coords(*KRAKOW),
+        budget_pln=100,
+        preferred_categories=["museum", "park"],
+        food_preferences=["italian", "polish"],
+        transport_modes=[TravelMode.WALK],
+    )
+
+    candidates, food_stop_id = PlanningService()._prepare_candidates(
+        [nearby_park, nearby_museum, italian, polish],
+        request,
+        limit=3,
+        selected_food_preference="italian",
+    )
+
+    assert food_stop_id == "italian"
+    assert candidates[0].id == "italian"
+    assert {poi.id for poi in candidates[1:]} == {"museum", "park"}
+    assert sum(is_food_venue(poi) for poi in candidates) == 1
 
 
 # =========================================================================== #

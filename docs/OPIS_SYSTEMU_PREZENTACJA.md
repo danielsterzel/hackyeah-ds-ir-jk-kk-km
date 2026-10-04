@@ -182,17 +182,18 @@ Techniczny endpoint przyjmujący bezpośrednio `LLMOutput` i zwracający wewnęt
 9. Dataset 877 miejsc jest mapowany do taksonomii.
 10. Miejsca są filtrowane według promienia, wykluczeń i godzin.
 11. Kandydaci są oceniani według ratingu, popularności i preferencji.
-12. Wybierane jest maksymalnie 30 atrakcji.
-13. GPS jest dodawany jako węzeł 0.
-14. ORS Matrix zwraca realny czas i dystans każdej pary.
-15. Encoder buduje graf.
-16. OR-Tools wybiera podzbiór i kolejność.
-17. Decoder buduje timeline.
-18. ORS Directions pobiera GeoJSON finalnych odcinków.
-19. Timeline aktualizuje się finalnymi czasami.
-20. TicketService dodaje ceny.
-21. Mapper buduje RoutePlan.
-22. Frontend rysuje mapę, listę i summary.
+12. Jeśli użytkownik chce jedzenie, losowana jest jedna z podanych kuchni i wybierany jeden obowiązkowy lokal.
+13. Wybierane jest maksymalnie 30 miejsc łącznie z tym lokalem.
+14. GPS jest dodawany jako węzeł 0.
+15. ORS Matrix zwraca realny czas i dystans każdej pary.
+16. Encoder buduje graf.
+17. OR-Tools wybiera podzbiór i kolejność, zachowując obowiązkowy lokal.
+18. Decoder buduje timeline.
+19. ORS Directions pobiera GeoJSON finalnych odcinków.
+20. Timeline aktualizuje się finalnymi czasami.
+21. TicketService dodaje ceny.
+22. Mapper buduje RoutePlan.
+23. Frontend rysuje mapę, listę i summary.
 ```
 
 ## 8. Moduły backendu
@@ -454,7 +455,7 @@ Frontend usuwa końcowy `/` z `NEXT_PUBLIC_BACKEND_URL`. Przy deploymentcie trze
 
 ## 17. Testy
 
-Backend ma 71 przechodzących testów. Zakres:
+Backend ma 72 przechodzące testy. Zakres:
 
 - mapping kategorii,
 - `park` bez fałszywego `parking`,
@@ -494,7 +495,7 @@ Frontend przechodzi ESLint oraz produkcyjny build Next.js.
 - transit = dystans × 1.3 / 20 km/h,
 - auto = 0.50 zł/km bez parkingu,
 - każda wizyta = 60 minut,
-- jedzenie = dopasowanie markerów lokalu i aliasów kuchni w datasecie,
+- restauracja jest obowiązkowym stopem, ale jej identyfikacja korzysta z markerów i aliasów datasetu,
 - brakująca geometria = prosta.
 
 ### Zbierane, ale niewykorzystane
@@ -596,7 +597,7 @@ Pewne liczby z kodu i danych:
 - 6 pytań,
 - 5 sekund limitu solvera,
 - 12 sekund timeoutu ORS,
-- 71 testów backendowych.
+- 72 testy backendowe.
 
 Nie podawać bez pomiaru:
 
