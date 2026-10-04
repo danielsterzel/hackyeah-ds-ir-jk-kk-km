@@ -17,7 +17,15 @@ import {
   useMap,
 } from "react-leaflet";
 import L, { type LatLngExpression, type PathOptions } from "leaflet";
-import { Clock3, Footprints, Wallet } from "lucide-react";
+import {
+  Bike,
+  BusFront,
+  CarFront,
+  Clock3,
+  Footprints,
+  Route,
+  Wallet,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -159,6 +167,22 @@ function modeLabel(mode: Leg["mode"]) {
   }[mode];
 }
 
+function TransportModeIcon({ mode }: { mode: Leg["mode"] }) {
+  if (mode === "walk") {
+    return <Footprints className="size-3.5" aria-hidden="true" />;
+  }
+
+  if (mode === "bus") {
+    return <BusFront className="size-3.5" aria-hidden="true" />;
+  }
+
+  if (mode === "bike" || mode === "scooter") {
+    return <Bike className="size-3.5" aria-hidden="true" />;
+  }
+
+  return <CarFront className="size-3.5" aria-hidden="true" />;
+}
+
 function formatDistance(meters: number) {
   return meters >= 1000
     ? `${(meters / 1000).toFixed(1)} km`
@@ -192,6 +216,10 @@ export function TripMap({ plan }: { plan: RoutePlan }) {
           (stop) => [stop.place.lat, stop.place.lng] as LatLngExpression,
         );
   }, [plan.legs, plan.stops]);
+  const totalTravelDurationMin = useMemo(
+    () => plan.legs.reduce((total, leg) => total + leg.duration_min, 0),
+    [plan.legs],
+  );
   const setMarker = (id: string, marker: L.Marker | null) => {
     markers.current[id] = marker;
   };
@@ -299,6 +327,11 @@ export function TripMap({ plan }: { plan: RoutePlan }) {
                     value={formatDuration(plan.summary.total_duration_min)}
                   />
                   <Metric
+                    icon={<Route size={17} />}
+                    label="Czas dojazdów"
+                    value={formatDuration(totalTravelDurationMin)}
+                  />
+                  <Metric
                     icon={<Footprints size={17} />}
                     label="Dystans"
                     value={formatDistance(plan.summary.total_distance_m)}
@@ -337,46 +370,71 @@ export function TripMap({ plan }: { plan: RoutePlan }) {
               </CardHeader>
               <CardContent>
                 <ol className="space-y-1">
-                  {plan.stops.map((stop) => (
-                    <li key={stop.id}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedStopId(stop.id);
-                          setSelectionVersion((version) => version + 1);
-                        }}
-                        className="group flex w-full items-start gap-3 rounded-xl p-2.5 text-left transition hover:bg-emerald-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
-                      >
-                        <span className={`mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${stop.kind === "start" ? "bg-emerald-100 text-emerald-800" : stop.kind === "end" ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-800"}`}>
-                          {stop.kind === "start" ? "S" : stop.kind === "end" ? "K" : stop.order}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-semibold group-hover:text-emerald-800">{stop.place.name}</span>
-                          <span className="mt-0.5 block text-xs text-slate-500">
-                            {stop.arrival_at ? new Date(stop.arrival_at).toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" }) : "Start"}
-                            {stop.kind === "attraction" &&
-                              ` · ${
-                                !stop.ticket_price_known
-                                  ? "cena nieznana"
-                                  : stop.price_pln
-                                    ? `${stop.price_pln.toFixed(0)} zł`
-                                    : "bezpłatnie"
-                              }`}
+                  {plan.stops.map((stop, index) => {
+                    const nextStop = plan.stops[index + 1];
+                    const nextLeg = nextStop
+                      ? plan.legs.find(
+                          (leg) =>
+                            leg.from_stop_id === stop.id &&
+                            leg.to_stop_id === nextStop.id,
+                        ) ?? plan.legs[index]
+                      : undefined;
+
+                    return (
+                      <li key={stop.id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedStopId(stop.id);
+                            setSelectionVersion((version) => version + 1);
+                          }}
+                          className="group flex w-full items-start gap-3 rounded-xl p-2.5 text-left transition hover:bg-emerald-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
+                        >
+                          <span className={`mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${stop.kind === "start" ? "bg-emerald-100 text-emerald-800" : stop.kind === "end" ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-800"}`}>
+                            {stop.kind === "start" ? "S" : stop.kind === "end" ? "K" : stop.order}
                           </span>
-                          {stop.closes_at && (
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-semibold group-hover:text-emerald-800">{stop.place.name}</span>
                             <span className="mt-0.5 block text-xs text-slate-500">
-                              Otwarte do {formatTime(stop.closes_at)}
+                              {stop.arrival_at ? new Date(stop.arrival_at).toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" }) : "Start"}
+                              {stop.kind === "attraction" &&
+                                ` · ${
+                                  !stop.ticket_price_known
+                                    ? "cena nieznana"
+                                    : stop.price_pln
+                                      ? `${stop.price_pln.toFixed(0)} zł`
+                                      : "bezpłatnie"
+                                }`}
                             </span>
-                          )}
-                          {stop.warnings.length > 0 && (
-                            <span className="mt-1 block text-xs font-semibold text-amber-700">
-                              {stop.warnings[0].message}
+                            {stop.closes_at && (
+                              <span className="mt-0.5 block text-xs text-slate-500">
+                                Otwarte do {formatTime(stop.closes_at)}
+                              </span>
+                            )}
+                            {stop.warnings.length > 0 && (
+                              <span className="mt-1 block text-xs font-semibold text-amber-700">
+                                {stop.warnings[0].message}
+                              </span>
+                            )}
+                          </span>
+                        </button>
+
+                        {nextLeg && (
+                          <div
+                            className="ml-6 flex min-h-9 items-center gap-2 border-l-2 border-dashed border-slate-200 pl-5 text-xs font-semibold text-slate-500"
+                            aria-label={`${modeLabel(nextLeg.mode)}, ${formatDuration(nextLeg.duration_min)}`}
+                          >
+                            <span className="flex size-6 items-center justify-center rounded-full bg-slate-100 text-slate-600">
+                              <TransportModeIcon mode={nextLeg.mode} />
                             </span>
-                          )}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
+                            <span>{formatDuration(nextLeg.duration_min)}</span>
+                            <span aria-hidden="true">·</span>
+                            <span>{modeLabel(nextLeg.mode)}</span>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ol>
               </CardContent>
             </Card>

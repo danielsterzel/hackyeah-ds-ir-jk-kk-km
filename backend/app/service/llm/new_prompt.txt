@@ -33,6 +33,10 @@ scooter, taxi, car.
 
 4. If the user presents several acceptable alternatives, preserve all of them.
 
+4a. Order transportModes from the user's primary or preferred mode to acceptable
+fallbacks. If the user prefers cycling but also accepts walking, bicycle must be
+the first item and walking the later fallback.
+
 5. If the user says a preference does not matter, treat it as unspecified.
 
 6. Keep attraction preferences separate from food preferences.

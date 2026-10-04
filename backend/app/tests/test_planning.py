@@ -809,14 +809,30 @@ def llm_output_variants() -> list[LLMOutput]:
             optimization_strategy="least_crowded",
             excluded_categories=["nightlife", "entertainment"],
         ),
+        LLMOutput(
+            **common,
+            preferred_categories=["park", "historic"],
+            transport_modes=["bicycle", "walking"],
+            optimization_strategy="fastest",
+            excluded_categories=[],
+        ),
     ]
+
+
+def test_interview_primary_bicycle_mode_is_selected_over_walking_fallback():
+    service = PlanningService()
+    request = service._to_planning_request(llm_output_variants()[4])
+
+    assert request.transport_modes == [TravelMode.BICYCLE, TravelMode.WALK]
+    assert request.prefer_walking is False
+    assert service._select_travel_mode(request) == TravelMode.BICYCLE
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "payload",
     llm_output_variants(),
-    ids=["cheapest", "fastest", "most-places", "least-crowded"],
+    ids=["cheapest", "fastest", "most-places", "least-crowded", "bicycle"],
 )
 async def test_controller_runs_pipeline_for_llm_output(payload):
     plans = await create_plans(payload)

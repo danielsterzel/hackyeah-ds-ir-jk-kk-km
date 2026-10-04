@@ -230,6 +230,10 @@ class PlanningService:
         return plans
 
     def _to_planning_request(self, payload: LLMOutput) -> PlanningRequest:
+        transport_modes = [
+            self._parse_travel_mode(mode) for mode in payload.transport_modes
+        ]
+
         return PlanningRequest(
             start_at=payload.start_at,
             end_at=payload.end_at,
@@ -242,10 +246,13 @@ class PlanningService:
             budget_pln=payload.budget_pln,
             preferred_categories=payload.preferred_categories,
             food_preferences=payload.food_preferences,
-            transport_modes=[
-                self._parse_travel_mode(mode) for mode in payload.transport_modes
-            ],
-            prefer_walking="walking" in payload.transport_modes,
+            transport_modes=transport_modes,
+            # The interview orders modes from the user's primary preference to
+            # acceptable fallbacks. Walking should affect POI filtering only
+            # when it is the preferred mode, not merely one of the alternatives.
+            prefer_walking=bool(
+                transport_modes and transport_modes[0] == TravelMode.WALK
+            ),
             avoid_crowds=payload.avoid_crowds,
             weather_sensitive=payload.weather_sensitive,
             optimization_strategy=payload.optimization_strategy,
@@ -350,8 +357,6 @@ class PlanningService:
 
     @staticmethod
     def _select_travel_mode(request: PlanningRequest) -> TravelMode:
-        if request.prefer_walking:
-            return TravelMode.WALK
         if request.transport_modes:
             return request.transport_modes[0]
         return TravelMode.WALK

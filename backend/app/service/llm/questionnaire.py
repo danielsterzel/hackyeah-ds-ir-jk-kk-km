@@ -73,12 +73,19 @@ def normalize_llm_payload(content: str) -> dict:
 
     transport_aliases = {
         "walk": "walking",
+        "on foot": "walking",
         "bike": "bicycle",
+        "cycling": "bicycle",
+        "by bike": "bicycle",
+        "rower": "bicycle",
+        "rowerem": "bicycle",
         "public transit": "public_transport",
         "transit": "public_transport",
     }
     payload["transportModes"] = [
-        transport_aliases.get(mode, mode)
+        transport_aliases.get(
+            str(mode).casefold().strip(), str(mode).casefold().strip()
+        )
         for mode in payload.get("transportModes", [])
     ]
     return payload
