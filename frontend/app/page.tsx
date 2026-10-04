@@ -58,6 +58,7 @@ type InitQuestionnaireRequest = {
   latitude: number;
   longitude: number;
   optimizationStrategy: OptimizationStrategy;
+  budgetPln: number;
 };
 
 const USER_ID_STORAGE_KEY = "trip-planner-user-id";
@@ -185,6 +186,7 @@ export default function Home() {
   const [answer, setAnswer] = useState("");
   const [strategy, setStrategy] =
     useState<OptimizationStrategy>("cheapest");
+  const [budgetPln, setBudgetPln] = useState(100);
   const [answeredCount, setAnsweredCount] = useState(0);
   const [isLocating, setIsLocating] = useState(false);
   const [isFinished, setIsFinished] = useState(false);
@@ -268,6 +270,7 @@ export default function Home() {
           latitude: coordinates.latitude,
           longitude: coordinates.longitude,
           optimizationStrategy: strategy,
+          budgetPln,
         },
         { onSettled: () => setIsLocating(false) },
       );
@@ -453,6 +456,8 @@ export default function Home() {
                 <SetupStep
                   strategy={strategy}
                   onStrategyChange={setStrategy}
+                  budgetPln={budgetPln}
+                  onBudgetChange={setBudgetPln}
                   onStart={handleStart}
                   isRetry={initQuestionnaire.isError}
                 />
@@ -472,11 +477,15 @@ export default function Home() {
 function SetupStep({
   strategy,
   onStrategyChange,
+  budgetPln,
+  onBudgetChange,
   onStart,
   isRetry,
 }: {
   strategy: OptimizationStrategy;
   onStrategyChange: (strategy: OptimizationStrategy) => void;
+  budgetPln: number;
+  onBudgetChange: (budget: number) => void;
   onStart: () => void;
   isRetry: boolean;
 }) {
@@ -548,6 +557,30 @@ function SetupStep({
             );
           })}
         </div>
+      </fieldset>
+
+      <fieldset className="space-y-3">
+        <div className="flex items-center justify-between">
+          <legend className="text-sm font-bold text-[#35556c]">
+            Budżet całej trasy
+          </legend>
+          <span className="text-lg font-extrabold text-[#128ec0]">
+            {budgetPln} zł
+          </span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={500}
+          step={10}
+          value={budgetPln}
+          onChange={(event) => onBudgetChange(Number(event.target.value))}
+          className="w-full accent-[#2db9ee]"
+          aria-label="Budżet całej trasy w złotych"
+        />
+        <p className="text-xs text-[#7890a2]">
+          Limit obejmuje bilety wstępu i koszty przejazdów.
+        </p>
       </fieldset>
 
       <div className="flex flex-col gap-4 rounded-2xl bg-[#f2faff] p-4 sm:flex-row sm:items-center sm:justify-between">

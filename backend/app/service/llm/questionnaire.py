@@ -259,6 +259,8 @@ class OllamaService:
             preferred=output.preferred_categories,
             excluded=output.excluded_categories,
         )
+        if self.user_metadata is not None:
+            output.budget_pln = self.user_metadata.budget_pln
 
         return output
 
@@ -275,6 +277,7 @@ class OllamaService:
         return LLMOutput(
             start_at=datetime.combine(tomorrow, time(9), tzinfo=now.tzinfo),
             end_at=datetime.combine(tomorrow, time(18), tzinfo=now.tzinfo),
+            budget_pln=self.user_metadata.budget_pln,
             start_location={
                 "latitude": self.user_metadata.latitude,
                 "longitude": self.user_metadata.longitude,

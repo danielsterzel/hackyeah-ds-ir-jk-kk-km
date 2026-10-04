@@ -1,8 +1,9 @@
 import asyncio
+import logging
 from pathlib import Path
 
 from dotenv import load_dotenv
-from ollama import AsyncClient
+from ollama import AsyncClient, ResponseError
 
 from app.core.settings import settings
 from app.schemas.ticket_price import TicketInfo
@@ -26,16 +27,26 @@ client = AsyncClient(
         "Authorization": f"Bearer {settings.ollama_api_key}"
     }
 )
+logger = logging.getLogger(__name__)
 
 
 class TicketService:
 
+    def __init__(self) -> None:
+        self._cache: dict[str, TicketInfo] = {}
+        self._web_search_unavailable = False
 
     async def get_ticket_info(
             self,
             place_name: str,
             visit_at: datetime | None = None
     ) -> TicketInfo:
+
+        cache_key = place_name.casefold().strip()
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+        if self._web_search_unavailable:
+            return TicketInfo()
 
         reference_datetime = (
                 visit_at or datetime.now().astimezone()
@@ -48,10 +59,20 @@ class TicketService:
 
         print(f"\nSEARCHING: {query}")
 
-        search_result = await client.web_search(
-            query=query,
-            max_results=5,
-        )
+        try:
+            search_result = await client.web_search(
+                query=query,
+                max_results=5,
+            )
+        except ResponseError as exc:
+            if exc.status_code == 429:
+                self._web_search_unavailable = True
+                logger.warning(
+                    "Ticket price lookup disabled for this run: Ollama web search "
+                    "rate limit reached"
+                )
+                return TicketInfo()
+            raise
 
 
         research_parts: list[str] = []
@@ -88,8 +109,6 @@ class TicketService:
     {fetched.content[:12000]}
     """
                 )
-
-                fetched = await client.web_fetch(url=result.url)
 
                 print("\n" + "=" * 80)
                 print(f"FETCHED URL: {result.url}")
@@ -146,9 +165,11 @@ class TicketService:
             keep_alive="1m",
         )
 
-        return TicketInfo.model_validate_json(
+        ticket_info = TicketInfo.model_validate_json(
             response.message.content
         )
+        self._cache[cache_key] = ticket_info
+        return ticket_info
 
 
 async def main():

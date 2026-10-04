@@ -167,6 +167,7 @@ class RoutePlanMapper:
             )
         return RoutePlan(
             strategy=request.optimization_strategy,
+            budget_pln=float(request.budget_pln),
             solver_status=plan.status,
             objective_value=plan.objective_value,
             total_reward=plan.total_reward,
@@ -177,11 +178,14 @@ class RoutePlanMapper:
                 total_walking_m=total_walking_m,
                 attractions_count=len(route_stops),
                 fits_time=time_over_s == 0,
-                # The current planner has an internal technical limit, but the
-                # user does not provide a real budget yet.
-                fits_budget=None,
+                fits_budget=plan.total_cost.money_minor <= round(
+                    request.budget_pln * 100
+                ),
                 time_over_min=round(time_over_s / 60),
-                budget_over_pln=None,
+                budget_over_pln=max(
+                    0,
+                    plan.total_cost.money_minor / 100 - float(request.budget_pln),
+                ),
             ),
             stops=route_stops,
             legs=legs,
@@ -220,6 +224,7 @@ class RoutePlanMapper:
                 0, round((stop.departure - stop.arrival).total_seconds() / 60)
             ),
             price_pln=stop.poi.visit_cost.money_minor / 100,
+            ticket_price_known=stop.poi.ticket_price_known,
             opens_at=opens_at,
             closes_at=closes_at,
             warnings=warnings,

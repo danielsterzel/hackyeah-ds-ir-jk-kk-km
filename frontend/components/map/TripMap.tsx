@@ -289,6 +289,11 @@ export function TripMap({ plan }: { plan: RoutePlan }) {
                     value={`${plan.summary.total_cost_pln.toFixed(0)} zł`}
                   />
                   <Metric
+                    icon={<Wallet size={17} />}
+                    label="Budżet"
+                    value={`${plan.budget_pln.toFixed(0)} zł`}
+                  />
+                  <Metric
                     icon={<Clock3 size={17} />}
                     label="Czas"
                     value={formatDuration(plan.summary.total_duration_min)}
@@ -349,7 +354,14 @@ export function TripMap({ plan }: { plan: RoutePlan }) {
                           <span className="block truncate text-sm font-semibold group-hover:text-emerald-800">{stop.place.name}</span>
                           <span className="mt-0.5 block text-xs text-slate-500">
                             {stop.arrival_at ? new Date(stop.arrival_at).toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" }) : "Start"}
-                            {stop.kind === "attraction" && ` · ${stop.price_pln ? `${stop.price_pln.toFixed(0)} zł` : "bezpłatnie"}`}
+                            {stop.kind === "attraction" &&
+                              ` · ${
+                                !stop.ticket_price_known
+                                  ? "cena nieznana"
+                                  : stop.price_pln
+                                    ? `${stop.price_pln.toFixed(0)} zł`
+                                    : "bezpłatnie"
+                              }`}
                           </span>
                           {stop.closes_at && (
                             <span className="mt-0.5 block text-xs text-slate-500">

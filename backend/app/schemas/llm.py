@@ -2,6 +2,7 @@ from typing import Literal
 from app.schemas.configured_schema import ConfiguredSchema
 from pydantic import Field
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 PlaceCategory = Literal[
@@ -55,6 +56,7 @@ class Coordinates(ConfiguredSchema):
 
 class LLMOutput(ConfiguredSchema):
 
+    budget_pln: Decimal = Field(default=100, ge=0, le=2000)
     start_at: datetime
     end_at: datetime
 
@@ -84,6 +86,7 @@ class UserInitQuestionnaire(ConfiguredSchema):
     id: UUID
     latitude: float
     longitude: float
+    budget_pln: Decimal = Field(default=100, ge=0, le=2000)
     optimization_strategy: Literal[
         "cheapest", "fastest", "most_places", "least_crowded"
     ]

@@ -116,6 +116,7 @@ class POI(DomainModel):
         default_factory=lambda: CostVector(time_s=3600),
         description="Koszt samej wizyty (czas zwiedzania, bilet wstępu)",
     )
+    ticket_price_known: bool = False
 
 
 # --------------------------------------------------------------------------- #
@@ -319,6 +320,7 @@ class RouteStop(DomainModel):
     departure_at: datetime
     visit_duration_min: int = Field(ge=0)
     price_pln: float = Field(ge=0)
+    ticket_price_known: bool = False
     opens_at: datetime | None = None
     closes_at: datetime | None = None
     warnings: list[RouteWarning] = Field(default_factory=list)
@@ -349,6 +351,7 @@ class RouteSummary(DomainModel):
 
 class RoutePlan(DomainModel):
     strategy: Literal["cheapest", "fastest", "most_places", "least_crowded"]
+    budget_pln: float = Field(ge=0)
     solver_status: SolverStatus
     objective_value: float | None = None
     total_reward: float = 0.0
