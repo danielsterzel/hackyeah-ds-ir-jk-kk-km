@@ -13,7 +13,10 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ],
-    allow_origin_regex=r"https://hackyeah-ds-ir-jk-kk-.*\.vercel\.app",
+    # Accept the production URL and every Vercel preview deployment.
+    # Preview hostnames change for each deployment, so matching only one
+    # project prefix makes otherwise valid builds fail their CORS preflight.
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
